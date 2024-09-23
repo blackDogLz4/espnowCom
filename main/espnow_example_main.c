@@ -28,7 +28,7 @@
 #include "esp_now.h"
 #include "esp_crc.h"
 #include "espnow_example.h"
-#include "myespnow.h"
+#include "espnowCom_commons.h"
 
 void app_main(void)
 {
@@ -40,5 +40,11 @@ void app_main(void)
     }
     ESP_ERROR_CHECK( ret );
 
-    print_hello();
+    espnowCom_init();
+
+    while(1){
+        vTaskDelay(1000/portTICK_RATE_MS);
+        //ESP_LOGI(TAG, "request send Hey");
+        espnowCom_send("Hey");
+    }
 }
