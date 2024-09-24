@@ -5,8 +5,12 @@
 static xQueueHandle sendQueue;
 static xQueueHandle recvQueue; 
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+
+// send / receive Buffer
 static uint8_t *sendDataBuffer;
 static uint8_t *recvDataBuffer;
+
+static xSemaphoreHandle sendmutex;
 
 // mutex for state switching in Send/Recevie Tasks
 static xSemaphoreHandle state_mutex;
@@ -61,6 +65,9 @@ int espnowCom_init(){
     // create mutex for state switching
     state_mutex = xSemaphoreCreateMutex();
 
+    // create mutex for send
+    sendmutex = xSemaphoreCreateMutex();
+
 
     /* Add broadcast peer information to peer list. */
     esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
@@ -114,18 +121,19 @@ static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_stat
 static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
 {
     espnowCom_recvEvent evt;
-
+    espnowCom_DataStruct *datastruct;
     if (mac_addr == NULL || data == NULL || len <= 0) {
         ESP_LOGE(TAG, "Receive cb arg error");
         return;
     }
 
     //set Buffer
-    evt.recv_data = (espnowCom_DataStruct *) recvDataBuffer;
+    evt.recv_data = (void *) recvDataBuffer;
+    datastruct = (espnowCom_DataStruct *) recvDataBuffer;
     memcpy(evt.mac, mac_addr, ESP_NOW_ETH_ALEN);
 
-    evt.recv_data->type = data[0];
-    memcpy(evt.recv_data->data, &data[1], len);
+    datastruct->type = data[0];
+    memcpy(datastruct->data, &data[1], len-1);
     
     evt.len = len;
     if (xQueueSend(recvQueue, &evt, portTICK_RATE_MS) != pdTRUE) {
@@ -137,6 +145,9 @@ static void espnowCom_send_stringTask(void *data){
     espnowCom_sendEvent evt;
     int ret;
     volatile espnowCom_States current = espnowCom_Sate_Connect;
+    
+    espnowCom_DataStruct *datasimple;
+    espnowCom_DataStruct_SimpleStruct *datastruct;
     // send
     while(1){
         if(xSemaphoreTake(state_mutex, 1 / portTICK_PERIOD_MS)){
@@ -147,7 +158,14 @@ static void espnowCom_send_stringTask(void *data){
         switch(current){
             case espnowCom_Sate_Connect:
                 if (xQueueReceive(sendQueue, &evt, 100 / portTICK_PERIOD_MS) == pdTRUE) {
-                    ESP_LOGI(TAG, "Broadcasting %s", (char* ) evt.send_data->data);
+                    datasimple = (espnowCom_DataStruct *) evt.send_data;
+                    datastruct = (espnowCom_DataStruct_SimpleStruct *) evt.send_data;
+                    if(datasimple->type == espnowCom_Data_Type_String){
+                        ESP_LOGI(TAG, "Broadcasting %s", (char* ) datasimple->data);
+                    }
+                    else{
+                        ESP_LOGI(TAG, "Broadcasting %f", datastruct->some_float);
+                    }
                     ret=esp_now_send(evt.mac , (uint8_t*) evt.send_data, evt.len);
                     if(ret != ESP_OK){
                         ESP_LOGE(TAG, "Sending failed, %d", ret);
@@ -167,6 +185,9 @@ static void espnowCom_RecvTask(void *data){
    
     espnowCom_recvEvent recvevt;
     volatile espnowCom_States current = espnowCom_Sate_Connect;
+
+    espnowCom_DataStruct *datastruct;
+    espnowCom_DataStruct_SimpleStruct *simplestruct;
     // receive
     while(1){
         if(xSemaphoreTake(state_mutex, 1 / portTICK_PERIOD_MS)){
@@ -177,13 +198,22 @@ static void espnowCom_RecvTask(void *data){
         switch(current){
             case espnowCom_Sate_Connect:
                 if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
-                    ESP_LOGI(TAG, "received %s", recvevt.recv_data->data);
-                    ESP_LOGI(TAG, "Connect");
+                    datastruct = (espnowCom_DataStruct *) recvevt.recv_data;
+                    switch(datastruct->type){
+                        case espnowCom_Data_Type_String:
+                            ESP_LOGI(TAG, "received %s", datastruct->data);
+                            ESP_LOGI(TAG, "Connect");
+                            break;
+                        case espnowCom_Data_Type_SimpleStruct:
+                            simplestruct = (espnowCom_DataStruct_SimpleStruct *) recvevt.recv_data;
+
+                            ESP_LOGI(TAG, "received %f", simplestruct->some_float);
+                            break;
+                    }
                 }
                 break;
             case espnowCom_Sate_Run:
                 if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
-                    ESP_LOGI(TAG, "received %s", recvevt.recv_data->data);
                     ESP_LOGI(TAG, "Run");
                 }
             break;
@@ -206,20 +236,69 @@ void espnowCom_switchMode(espnowCom_States state){
 
 void espnowCom_send_string(char *str){
     static espnowCom_sendEvent evt = { 0 };
-    
+    static espnowCom_DataStruct *datastruct;
     // broadcast string
     memcpy((void *)evt.mac, (void *)broadcast_Mac, ESP_NOW_ETH_ALEN);
 
-    evt.len = strlen(str) + 1;
+    evt.len = strlen(str) + 2;
     
     if(evt.len > ESPNOWCOM_MAX_DATA_LEN){
         ESP_LOGE(TAG, "Too much Data to send!!");
         return;
     }
 
-    evt.send_data = (espnowCom_DataStruct *) sendDataBuffer;
-    evt.send_data->type = espnowCom_Data_Type_String;
-    memcpy((void *)evt.send_data->data, (void *) str, evt.len - 1); 
+    //write Data to Buffer
+    //  get mutex
+    if(xSemaphoreTake(sendmutex, portMAX_DELAY)){
+        evt.send_data = (void *) sendDataBuffer;
+        datastruct = (espnowCom_DataStruct *) sendDataBuffer;
+        datastruct->type = espnowCom_Data_Type_String;
+        memcpy((void *)datastruct->data, (void *) str, evt.len); 
 
-    xQueueSend(sendQueue, &evt, portMAX_DELAY);
+        if (xQueueSend(sendQueue, &evt, portMAX_DELAY) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to send data to queue.");
+        }
+
+        vTaskDelay(1 / portTICK_RATE_MS);
+        // data on queue soo all ayt
+        xSemaphoreGive(sendmutex);
+    }
+    else{
+        ESP_LOGE(TAG, "couldn't unlock mutex :(");
+    }
+    
+}
+
+void espnowCom_send_float(float fl){
+    static espnowCom_sendEvent evt = { 0 };
+    static espnowCom_DataStruct_SimpleStruct *datastruct;
+    // broadcast string
+    memcpy((void *)evt.mac, (void *)broadcast_Mac, ESP_NOW_ETH_ALEN);
+
+    evt.len = sizeof(espnowCom_DataStruct_SimpleStruct);
+    
+    if(evt.len > ESPNOWCOM_MAX_DATA_LEN){
+        ESP_LOGE(TAG, "Too much Data to send!!");
+        return;
+    }
+
+    //write Data to Buffer
+    //  get mutex
+    if(xSemaphoreTake(sendmutex, portMAX_DELAY)){
+        evt.send_data = (void *) sendDataBuffer;
+        datastruct = (espnowCom_DataStruct_SimpleStruct *) sendDataBuffer;
+
+        datastruct->type = espnowCom_Data_Type_SimpleStruct;
+        datastruct->some_float = fl;
+
+        if (xQueueSend(sendQueue, &evt, portMAX_DELAY) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to send data to queue.");
+        }
+        vTaskDelay(1 / portTICK_RATE_MS);
+        // data on queue soo all ayt
+        xSemaphoreGive(sendmutex);
+    }
+    else{
+        ESP_LOGE(TAG, "couldn't unlock mutex :(");
+    }
 }

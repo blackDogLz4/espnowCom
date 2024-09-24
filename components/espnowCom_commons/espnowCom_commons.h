@@ -26,14 +26,20 @@
 // Esp Now Datatypes
 typedef enum{
     espnowCom_Data_Type_String,
-    SENDTYPE_COMMAND,
+    espnowCom_Data_Type_SimpleStruct,
 }espnowCom_Data_Type;
 
-// Data struct
+// Data struct Default
 typedef struct{
     uint8_t type;
     uint8_t data[];
 }espnowCom_DataStruct;
+
+// Data struct with float
+typedef struct{
+    uint8_t type;
+    float some_float;
+}espnowCom_DataStruct_SimpleStruct;
 
 // Data structures
 // send event stores:
@@ -42,13 +48,13 @@ typedef struct{
 typedef struct {
     uint8_t mac[ESP_NOW_ETH_ALEN];
     int len;
-    espnowCom_DataStruct *send_data;
+    void *send_data;
 } espnowCom_sendEvent;
 
 typedef struct {
     uint8_t mac[ESP_NOW_ETH_ALEN];
     int len;
-    espnowCom_DataStruct *recv_data;
+    void *recv_data;
 } espnowCom_recvEvent;
 
 
@@ -61,6 +67,7 @@ typedef enum {
 int espnowCom_init();
 void espnowCom_switchMode(espnowCom_States state);
 void espnowCom_send_string(char *str);
+void espnowCom_send_float(float fl);
 
 void espnowCom_deinit();
 
