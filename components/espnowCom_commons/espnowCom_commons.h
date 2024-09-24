@@ -21,18 +21,36 @@
 #include "esp_crc.h"
 
 #define ESPNOW_QUEUE_SIZE 30
+#define ESPNOWCOM_MAX_DATA_LEN 255
+
+// Esp Now Datatypes
+typedef enum{
+    espnowCom_Data_Type_String,
+    SENDTYPE_COMMAND,
+}espnowCom_Data_Type;
+
+// Data struct
+typedef struct{
+    uint8_t type;
+    uint8_t data[];
+}espnowCom_DataStruct;
 
 // Data structures
+// send event stores:
+//          mac -- mac to send Data to
+//          len -- len of the Data in Bytes Note Max. ESPNOWCOM_MAX_DATA_LEN 
 typedef struct {
-    uint8_t message[10];
+    uint8_t mac[ESP_NOW_ETH_ALEN];
     int len;
-} espnowCom_SendEvent;
+    espnowCom_DataStruct *send_data;
+} espnowCom_sendEvent;
 
 typedef struct {
     uint8_t mac[ESP_NOW_ETH_ALEN];
-    uint8_t message[10];
     int len;
-} espnowCom_RecvEvent;
+    espnowCom_DataStruct *recv_data;
+} espnowCom_recvEvent;
+
 
 typedef enum {
     espnowCom_Sate_Connect,
@@ -42,7 +60,7 @@ typedef enum {
 //functions
 int espnowCom_init();
 void espnowCom_switchMode(espnowCom_States state);
-void espnowCom_send(char *str);
+void espnowCom_send_string(char *str);
 
 void espnowCom_deinit();
 

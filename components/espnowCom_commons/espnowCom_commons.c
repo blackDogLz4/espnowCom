@@ -5,15 +5,17 @@
 static xQueueHandle sendQueue;
 static xQueueHandle recvQueue; 
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t *sendDataBuffer;
+static uint8_t *recvDataBuffer;
 
 // mutex for state switching in Send/Recevie Tasks
 static xSemaphoreHandle state_mutex;
 static int state_current = espnowCom_Sate_Connect;
 
 // private functions
-static void espnowCom_SendTask(void *);
+static void espnowCom_send_stringTask(void *);
 static void espnowCom_RecvTask(void *data);
-static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
+static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len);
 
 
@@ -44,14 +46,14 @@ int espnowCom_init(){
     ESP_ERROR_CHECK( esp_now_set_pmk((uint8_t *)CONFIG_ESPNOW_PMK) );
 
     // initialize basic send functionality
-    sendQueue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(espnowCom_SendEvent));
+    sendQueue = xQueueCreate(1, sizeof(espnowCom_sendEvent));
     if (sendQueue == NULL) {
         ESP_LOGE(TAG, "Create Quee fail");
         return ESP_FAIL;
     }
 
     // initialize basic recv functionality
-    recvQueue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(espnowCom_RecvEvent));
+    recvQueue = xQueueCreate(1, sizeof(espnowCom_recvEvent));
     if (recvQueue == NULL) {
         ESP_LOGE(TAG, "Create Quee fail");
         return ESP_FAIL;
@@ -75,10 +77,24 @@ int espnowCom_init(){
     ESP_ERROR_CHECK( esp_now_add_peer(peer) );
     free(peer);
 
-    ESP_ERROR_CHECK( esp_now_register_send_cb(_espnowCom_send_cb) );
+    // reserve memory for send buffer
+    sendDataBuffer = calloc(ESPNOWCOM_MAX_DATA_LEN, sizeof(uint8_t));
+    if(sendDataBuffer == NULL){
+        ESP_LOGE(TAG, "couldn't reserve space for send Data!!");
+        ESP_ERROR_CHECK(false);
+    }
+
+    // reserve memory for recv buffer
+    recvDataBuffer = calloc(ESPNOWCOM_MAX_DATA_LEN, sizeof(uint8_t));
+    if(recvDataBuffer == NULL){
+        ESP_LOGE(TAG, "couldn't reserve space for send Data!!");
+        ESP_ERROR_CHECK(false);
+    }
+
+    ESP_ERROR_CHECK( esp_now_register_send_cb(_espnowCom_send_string_cb) );
     ESP_ERROR_CHECK( esp_now_register_recv_cb(_espnowCom_recv_cb) );
     
-    xTaskCreate(espnowCom_SendTask, "espnowCom_sendTask", 2048, NULL, 4, NULL);
+    xTaskCreate(espnowCom_send_stringTask, "espnowCom_send_stringTask", 2048, NULL, 4, NULL);
     xTaskCreate(espnowCom_RecvTask, "espnowCom_recvTask", 2048, NULL, 4, NULL);
 
     return ESP_OK;
@@ -87,9 +103,9 @@ int espnowCom_init(){
 void espnowCom_deinit(){
     esp_now_deinit();
 }
-static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
+static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_status_t status)
 {
-    espnowCom_SendEvent evt;
+    espnowCom_sendEvent evt;
     if (mac_addr == NULL) {
         ESP_LOGE(TAG, "Send cb arg error");
         return;
@@ -97,22 +113,28 @@ static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t st
 }
 static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
 {
-    espnowCom_RecvEvent evt;
+    espnowCom_recvEvent evt;
 
     if (mac_addr == NULL || data == NULL || len <= 0) {
         ESP_LOGE(TAG, "Receive cb arg error");
         return;
     }
+
+    //set Buffer
+    evt.recv_data = (espnowCom_DataStruct *) recvDataBuffer;
     memcpy(evt.mac, mac_addr, ESP_NOW_ETH_ALEN);
-    memcpy(evt.message, data, len);
+
+    evt.recv_data->type = data[0];
+    memcpy(evt.recv_data->data, &data[1], len);
+    
     evt.len = len;
     if (xQueueSend(recvQueue, &evt, portTICK_RATE_MS) != pdTRUE) {
         ESP_LOGW(TAG, "Send receive queue fail");
     }
 }
-static void espnowCom_SendTask(void *data){
+static void espnowCom_send_stringTask(void *data){
    
-    espnowCom_SendEvent evt;
+    espnowCom_sendEvent evt;
     int ret;
     volatile espnowCom_States current = espnowCom_Sate_Connect;
     // send
@@ -125,8 +147,8 @@ static void espnowCom_SendTask(void *data){
         switch(current){
             case espnowCom_Sate_Connect:
                 if (xQueueReceive(sendQueue, &evt, 100 / portTICK_PERIOD_MS) == pdTRUE) {
-                    ESP_LOGI(TAG, "Broadcasting %s", evt.message);
-                    ret=esp_now_send(broadcast_Mac, evt.message, evt.len);
+                    ESP_LOGI(TAG, "Broadcasting %s", (char* ) evt.send_data->data);
+                    ret=esp_now_send(evt.mac , (uint8_t*) evt.send_data, evt.len);
                     if(ret != ESP_OK){
                         ESP_LOGE(TAG, "Sending failed, %d", ret);
                         //espnowCom_deinit();
@@ -143,7 +165,7 @@ static void espnowCom_SendTask(void *data){
 }
 static void espnowCom_RecvTask(void *data){
    
-    espnowCom_RecvEvent recvevt;
+    espnowCom_recvEvent recvevt;
     volatile espnowCom_States current = espnowCom_Sate_Connect;
     // receive
     while(1){
@@ -155,13 +177,13 @@ static void espnowCom_RecvTask(void *data){
         switch(current){
             case espnowCom_Sate_Connect:
                 if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
-                    ESP_LOGI(TAG, "received %s", recvevt.message);
+                    ESP_LOGI(TAG, "received %s", recvevt.recv_data->data);
                     ESP_LOGI(TAG, "Connect");
                 }
                 break;
             case espnowCom_Sate_Run:
                 if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
-                    ESP_LOGI(TAG, "received %s", recvevt.message);
+                    ESP_LOGI(TAG, "received %s", recvevt.recv_data->data);
                     ESP_LOGI(TAG, "Run");
                 }
             break;
@@ -182,11 +204,22 @@ void espnowCom_switchMode(espnowCom_States state){
     }
 }
 
-void espnowCom_send(char *str){
-    espnowCom_SendEvent evt;
+void espnowCom_send_string(char *str){
+    static espnowCom_sendEvent evt = { 0 };
+    
+    // broadcast string
+    memcpy((void *)evt.mac, (void *)broadcast_Mac, ESP_NOW_ETH_ALEN);
 
-    evt.len = strlen(str)+1;
-    strcpy((char *) evt.message, str); 
+    evt.len = strlen(str) + 1;
+    
+    if(evt.len > ESPNOWCOM_MAX_DATA_LEN){
+        ESP_LOGE(TAG, "Too much Data to send!!");
+        return;
+    }
+
+    evt.send_data = (espnowCom_DataStruct *) sendDataBuffer;
+    evt.send_data->type = espnowCom_Data_Type_String;
+    memcpy((void *)evt.send_data->data, (void *) str, evt.len - 1); 
 
     xQueueSend(sendQueue, &evt, portMAX_DELAY);
 }
