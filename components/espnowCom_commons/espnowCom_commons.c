@@ -6,8 +6,13 @@ static xQueueHandle sendQueue;
 static xQueueHandle recvQueue; 
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
+// mutex for state switching in Send/Recevie Tasks
+static xSemaphoreHandle state_mutex;
+static int state_current = espnowCom_Sate_Connect;
+
 // private functions
-static void espnowCom_Task(void *);
+static void espnowCom_SendTask(void *);
+static void espnowCom_RecvTask(void *data);
 static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len);
 
@@ -51,6 +56,9 @@ int espnowCom_init(){
         ESP_LOGE(TAG, "Create Quee fail");
         return ESP_FAIL;
     }
+    // create mutex for state switching
+    state_mutex = xSemaphoreCreateMutex();
+
 
     /* Add broadcast peer information to peer list. */
     esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
@@ -70,7 +78,8 @@ int espnowCom_init(){
     ESP_ERROR_CHECK( esp_now_register_send_cb(_espnowCom_send_cb) );
     ESP_ERROR_CHECK( esp_now_register_recv_cb(_espnowCom_recv_cb) );
     
-    xTaskCreate(espnowCom_Task, "espnowCom_Task", 2048, NULL, 4, NULL);
+    xTaskCreate(espnowCom_SendTask, "espnowCom_sendTask", 2048, NULL, 4, NULL);
+    xTaskCreate(espnowCom_RecvTask, "espnowCom_recvTask", 2048, NULL, 4, NULL);
 
     return ESP_OK;
 }
@@ -94,7 +103,6 @@ static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int
         ESP_LOGE(TAG, "Receive cb arg error");
         return;
     }
-    ESP_LOGI(TAG, "received somtehing");
     memcpy(evt.mac, mac_addr, ESP_NOW_ETH_ALEN);
     memcpy(evt.message, data, len);
     evt.len = len;
@@ -102,28 +110,76 @@ static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int
         ESP_LOGW(TAG, "Send receive queue fail");
     }
 }
-static void espnowCom_Task(void *data){
+static void espnowCom_SendTask(void *data){
    
     espnowCom_SendEvent evt;
-    espnowCom_RecvEvent recvevt;
     int ret;
+    volatile espnowCom_States current = espnowCom_Sate_Connect;
     // send
     while(1){
-        // while (xQueueReceive(sendQueue, &evt, portMAX_DELAY) == pdTRUE) {
-        //     ESP_LOGI(TAG, "Broadcasting %s", evt.message);
-        //     ret=esp_now_send(broadcast_Mac, evt.message, evt.len);
-        //     if(ret != ESP_OK){
-        //         ESP_LOGE(TAG, "Sending failed, %d", ret);
-        //         //espnowCom_deinit();
-        //     }
-        //     //vTaskDelay(portTICK_RATE_MS);
-        // }
-
-        // recv quee
-        while (xQueueReceive(recvQueue, &recvevt, portMAX_DELAY) == pdTRUE){
-            ESP_LOGI(TAG, "received %s", recvevt.message);
+        if(xSemaphoreTake(state_mutex, 1 / portTICK_PERIOD_MS)){
+            current = state_current;
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            xSemaphoreGive(state_mutex);
+        }
+        switch(current){
+            case espnowCom_Sate_Connect:
+                if (xQueueReceive(sendQueue, &evt, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+                    ESP_LOGI(TAG, "Broadcasting %s", evt.message);
+                    ret=esp_now_send(broadcast_Mac, evt.message, evt.len);
+                    if(ret != ESP_OK){
+                        ESP_LOGE(TAG, "Sending failed, %d", ret);
+                        //espnowCom_deinit();
+                    }
+                    //vTaskDelay(portTICK_RATE_MS);
+                }
+                break;
+            case espnowCom_Sate_Run:
+                ESP_LOGI(TAG, "Not implemented yet");
+                vTaskDelay(500 / portTICK_PERIOD_MS);
+        }
+        vTaskDelay(1 / portTICK_PERIOD_MS);
+    }   
+}
+static void espnowCom_RecvTask(void *data){
+   
+    espnowCom_RecvEvent recvevt;
+    volatile espnowCom_States current = espnowCom_Sate_Connect;
+    // receive
+    while(1){
+        if(xSemaphoreTake(state_mutex, 1 / portTICK_PERIOD_MS)){
+            current = state_current;
+            vTaskDelay(10 / portTICK_PERIOD_MS);
+            xSemaphoreGive(state_mutex);
+        }
+        switch(current){
+            case espnowCom_Sate_Connect:
+                if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
+                    ESP_LOGI(TAG, "received %s", recvevt.message);
+                    ESP_LOGI(TAG, "Connect");
+                }
+                break;
+            case espnowCom_Sate_Run:
+                if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
+                    ESP_LOGI(TAG, "received %s", recvevt.message);
+                    ESP_LOGI(TAG, "Run");
+                }
+            break;
+        vTaskDelay(1 / portTICK_PERIOD_MS);
         }
     }   
+}
+
+void espnowCom_switchMode(espnowCom_States state){
+    
+    if(xSemaphoreTake(state_mutex, portMAX_DELAY)){
+        state_current = state;
+        vTaskDelay(10 / portTICK_PERIOD_MS);
+        xSemaphoreGive(state_mutex);
+    }
+    else{
+        ESP_LOGW(TAG, "Can't switch mode");
+    }
 }
 
 void espnowCom_send(char *str){

@@ -22,10 +22,6 @@
 
 #define ESPNOW_QUEUE_SIZE 30
 
-int espnowCom_init();
-void espnowCom_send(char *str);
-void espnowCom_deinit();
-
 // Data structures
 typedef struct {
     uint8_t message[10];
@@ -37,6 +33,19 @@ typedef struct {
     uint8_t message[10];
     int len;
 } espnowCom_RecvEvent;
+
+typedef enum {
+    espnowCom_Sate_Connect,
+    espnowCom_Sate_Run
+}espnowCom_States;
+
+//functions
+int espnowCom_init();
+void espnowCom_switchMode(espnowCom_States state);
+void espnowCom_send(char *str);
+
+void espnowCom_deinit();
+
 
 
 #endif // MYESPNOW_H 

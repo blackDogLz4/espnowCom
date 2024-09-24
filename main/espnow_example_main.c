@@ -43,8 +43,15 @@ void app_main(void)
     espnowCom_init();
 
     while(1){
-        vTaskDelay(1000/portTICK_RATE_MS);
-        //ESP_LOGI(TAG, "request send Hey");
-        espnowCom_send("Hey");
+
+            for(int i = 0; i<5; i++){
+                vTaskDelay(1000/portTICK_RATE_MS);
+                //ESP_LOGI(TAG, "request send Hey");
+                espnowCom_send("Hey");
+            }
+            ESP_LOGW(TAG, "switch mode");
+            espnowCom_switchMode(espnowCom_Sate_Run);
+            vTaskDelay(5000/portTICK_RATE_MS);
+            espnowCom_switchMode(espnowCom_Sate_Connect);
     }
 }
