@@ -3,9 +3,6 @@
 #ifndef MYESPNOW_H
 #define MYESPNOW_H
 
-#include "esp_log.h"
-#define TAG "espnowCom_commons"
-
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
@@ -19,6 +16,8 @@
 #include "esp_system.h"
 #include "esp_now.h"
 #include "esp_crc.h"
+
+#define TAG "espnowCom_commons"
 
 #define ESPNOW_QUEUE_SIZE 30
 #define ESPNOWCOM_MAX_DATA_LEN 255

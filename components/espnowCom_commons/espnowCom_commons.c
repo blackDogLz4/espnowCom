@@ -2,25 +2,25 @@
 #include "espnowCom_commons.h"
 
 // private variables
-static xQueueHandle sendQueue;
-static xQueueHandle recvQueue; 
+static QueueHandle_t sendQueue;
+static QueueHandle_t recvQueue; 
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 // send / receive Buffer
 static uint8_t *sendDataBuffer;
 static uint8_t *recvDataBuffer;
 
-static xSemaphoreHandle sendmutex;
+static SemaphoreHandle_t sendmutex;
 
 // mutex for state switching in Send/Recevie Tasks
-static xSemaphoreHandle state_mutex;
+static SemaphoreHandle_t state_mutex;
 static int state_current = espnowCom_Sate_Connect;
 
 // private functions
 static void espnowCom_send_stringTask(void *);
 static void espnowCom_RecvTask(void *data);
 static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
-static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len);
+static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
 
 int espnowCom_init(){
@@ -41,10 +41,6 @@ int espnowCom_init(){
     
     // initialize esp now
     ESP_ERROR_CHECK( esp_now_init() );
-    // TODO setup send and receive calback function
-    // ESP_ERROR_CHECK( esp_now_register_send_cb(example_espnow_send_cb) );
-    // ESP_ERROR_CHECK( esp_now_register_recv_cb(example_espnow_recv_cb) );
-
 
     /* Set primary master key. */
     ESP_ERROR_CHECK( esp_now_set_pmk((uint8_t *)CONFIG_ESPNOW_PMK) );
@@ -118,8 +114,13 @@ static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_stat
         return;
     }
 }
-static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int len)
+static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
 {
+    //ESP_LOGI(TAG, "Received something");
+    // get mac info
+    uint8_t * mac_addr = recv_info->src_addr;
+    //uint8_t * des_addr = recv_info->des_addr;
+
     espnowCom_recvEvent evt;
     espnowCom_DataStruct *datastruct;
     if (mac_addr == NULL || data == NULL || len <= 0) {
@@ -136,7 +137,7 @@ static void _espnowCom_recv_cb(const uint8_t *mac_addr, const uint8_t *data, int
     memcpy(datastruct->data, &data[1], len-1);
     
     evt.len = len;
-    if (xQueueSend(recvQueue, &evt, portTICK_RATE_MS) != pdTRUE) {
+    if (xQueueSend(recvQueue, &evt, portTICK_PERIOD_MS) != pdTRUE) {
         ESP_LOGW(TAG, "Send receive queue fail");
     }
 }
@@ -171,7 +172,7 @@ static void espnowCom_send_stringTask(void *data){
                         ESP_LOGE(TAG, "Sending failed, %d", ret);
                         //espnowCom_deinit();
                     }
-                    //vTaskDelay(portTICK_RATE_MS);
+                    //vTaskDelay(portTICK_PERIOD_MS);
                 }
                 break;
             case espnowCom_Sate_Run:
@@ -259,7 +260,7 @@ void espnowCom_send_string(char *str){
             ESP_LOGE(TAG, "Failed to send data to queue.");
         }
 
-        vTaskDelay(1 / portTICK_RATE_MS);
+        vTaskDelay(1 / portTICK_PERIOD_MS);
         // data on queue soo all ayt
         xSemaphoreGive(sendmutex);
     }
@@ -294,7 +295,7 @@ void espnowCom_send_float(float fl){
         if (xQueueSend(sendQueue, &evt, portMAX_DELAY) != pdPASS) {
             ESP_LOGE(TAG, "Failed to send data to queue.");
         }
-        vTaskDelay(1 / portTICK_RATE_MS);
+        vTaskDelay(1 / portTICK_PERIOD_MS);
         // data on queue soo all ayt
         xSemaphoreGive(sendmutex);
     }
