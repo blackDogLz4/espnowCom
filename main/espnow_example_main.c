@@ -50,7 +50,8 @@ void app_main(void)
                 ESP_LOGI(TAG, "request send Hey");
                 espnowCom_send_string("Hey");
                 vTaskDelay(50 / portTICK_PERIOD_MS);  // Small delay after sending string
-                // espnowCom_send_float(0.05);
+                espnowCom_send_float(0.05);
+                vTaskDelay(1000 / portTICK_PERIOD_MS);
             }
             // ESP_LOGW(TAG, "switch mode");
             // espnowCom_switchMode(espnowCom_Sate_Run);

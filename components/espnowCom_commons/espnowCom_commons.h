@@ -16,29 +16,11 @@
 #include "esp_system.h"
 #include "esp_now.h"
 #include "esp_crc.h"
-
-#define TAG "espnowCom_commons"
+#include "espnowComDataStructures.h"
 
 #define ESPNOW_QUEUE_SIZE 30
 #define ESPNOWCOM_MAX_DATA_LEN 255
-
-// Esp Now Datatypes
-typedef enum{
-    espnowCom_Data_Type_String,
-    espnowCom_Data_Type_SimpleStruct,
-}espnowCom_Data_Type;
-
-// Data struct Default
-typedef struct{
-    uint8_t type;
-    uint8_t data[];
-}espnowCom_DataStruct;
-
-// Data struct with float
-typedef struct{
-    uint8_t type;
-    float some_float;
-}espnowCom_DataStruct_SimpleStruct;
+#define MASTER 1
 
 // Data structures
 // send event stores:
