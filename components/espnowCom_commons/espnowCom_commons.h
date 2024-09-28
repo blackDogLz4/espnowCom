@@ -21,6 +21,7 @@
 
 #define ESPNOW_QUEUE_SIZE 30
 #define ESPNOWCOM_MAX_DATA_LEN 255
+#define ESPNOWCOM_MAX_SLAVES 1
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
 #define MASTER 1
 #else
@@ -54,7 +55,7 @@ void espnowCom_switchMode(espnowCom_States state);
 
 // Send functions master
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
-    void espnowCom_send_string(char *str);
+    void espnowCom_master_send_string(int slave_nbr, char *str);
     void espnowCom_send_float(float fl);
 // Send functions slave
 #else

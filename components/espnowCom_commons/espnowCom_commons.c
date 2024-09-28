@@ -11,6 +11,8 @@
 static QueueHandle_t sendQueue;
 static QueueHandle_t recvQueue; 
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t master_Mac[ESP_NOW_ETH_ALEN] = {};
+static uint8_t **slaves_Mac;
 
 // send / receive Buffer
 static uint8_t *sendDataBuffer;
@@ -26,7 +28,7 @@ static void espnowCom_send_stringTask(void *payload);
 static void espnowCom_RecvTask(void *payload);
 static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
-
+int espnowCom_addSlave(uint8_t *mac);
 // parse DataStructs
 static void processData(char *str, espnowCom_DataStruct_Base *data_base);
 
@@ -102,7 +104,13 @@ int espnowCom_init(){
     ESP_ERROR_CHECK( esp_now_register_send_cb(_espnowCom_send_string_cb) );
     ESP_ERROR_CHECK( esp_now_register_recv_cb(_espnowCom_recv_cb) );
     
-    
+    // allocate memory for slaves mac
+    if(MASTER){
+        slaves_Mac = malloc(sizeof(uint8_t *) * ESPNOWCOM_MAX_SLAVES);
+        for(int i = 0; i<ESPNOWCOM_MAX_SLAVES; i++){
+            slaves_Mac[i] = malloc(sizeof(uint8_t) *  ESP_NOW_ETH_ALEN);
+        }
+    }
 
     if(MASTER){
         //create payload
@@ -277,22 +285,13 @@ static void espnowCom_RecvTask(void *payload){
                                 if( memcmp(payloadarray, mgmtData->payload, ESPNOWCOM_PAYLOADLEN) == 0){
                                     ESP_LOGI(TAG, "Payload ok!");
                                 
-                                    /* Add new peer information to peer list. */
-                                    if(esp_now_is_peer_exist(recvevt.mac) != 1){
-                                        esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
-                                        if (peer == NULL) {
-                                            ESP_LOGE(TAG, "Malloc peer information fail");
-                                        }
-                                        memset(peer, 0, sizeof(esp_now_peer_info_t));
-                                        peer->channel = 0;
-                                        peer->ifidx = ESP_IF_WIFI_STA;
-                                        peer->encrypt = false;
-                                        memcpy(peer->peer_addr, recvevt.mac, ESP_NOW_ETH_ALEN);
-                                        esp_now_add_peer(peer);
-                                        free(peer);                                
+                                    // stop when all slaves are added
+                                    if(espnowCom_addSlave(recvevt.mac)){
+                                        espnowCom_switchMode(espnowCom_Sate_Run);
                                     }
-                                    espnowCom_sendMasterACK(recvevt.mac);
-                                    espnowCom_switchMode(espnowCom_Sate_Run);
+                                    else{
+                                        espnowCom_sendMasterACK(recvevt.mac);
+                                    }
                                     free(recvevt.recv_data);
                                 }
                                 else{
@@ -380,6 +379,41 @@ void espnowCom_sendSlaveACK(uint8_t *mac, uint8_t *payload){
         //espnowCom_deinit();
     }
 }
+
+/* add slave to peer list
+
+    return 1 -- slavelist is full
+    return 0 -- all ok
+*/
+int espnowCom_addSlave(uint8_t *mac){
+    static int slave_cnt = 0;
+    esp_now_peer_info_t *peer;
+    
+    if(slave_cnt >= ESPNOWCOM_MAX_SLAVES){
+        return 1;
+    }
+    if(esp_now_is_peer_exist(mac) != 1){
+        memcpy(slaves_Mac[slave_cnt], mac, sizeof(uint8_t) * ESP_NOW_ETH_ALEN);
+        slave_cnt++;                                
+        
+        peer = malloc(sizeof(esp_now_peer_info_t));
+        if (peer == NULL) {
+            ESP_LOGE(TAG, "Malloc peer information fail");
+        }
+        memset(peer, 0, sizeof(esp_now_peer_info_t));
+        peer->channel = 0;
+        peer->ifidx = ESP_IF_WIFI_STA;
+        peer->encrypt = false;
+        memcpy(peer->peer_addr, mac, ESP_NOW_ETH_ALEN);
+        esp_now_add_peer(peer);
+        free(peer);
+    }
+    if(slave_cnt >= ESPNOWCOM_MAX_SLAVES){
+        return 1;
+    }
+    return 0;
+}
+
 /* function to send ack from master*/
 void espnowCom_sendMasterACK(uint8_t *mac){
     espnowCom_DataStruct_Mgmt slaveResponse;
@@ -412,6 +446,44 @@ void espnowCom_send_string(char *str){
     static espnowCom_DataStruct_String *datastruct;
     // broadcast string
     memcpy((void *)evt.mac, (void *)broadcast_Mac, ESP_NOW_ETH_ALEN);
+
+    evt.len = strlen(str) + 2;
+    
+    if(evt.len > ESPNOWCOM_MAX_DATA_LEN){
+        ESP_LOGE(TAG, "Too much Data to send!!");
+        return;
+    }
+
+    //write Data to Buffer
+    //  get mutex
+    if(xSemaphoreTake(sendmutex, portMAX_DELAY)){
+        evt.send_data = (void *) sendDataBuffer;
+        datastruct = (espnowCom_DataStruct_String *) sendDataBuffer;
+        datastruct->type = espnowCom_DataType_String;
+        memcpy((void *)datastruct->string, (void *) str, evt.len); 
+
+        if (xQueueSend(sendQueue, &evt, portMAX_DELAY) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to send data to queue.");
+        }
+
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        // data on queue soo all ayt
+        xSemaphoreGive(sendmutex);
+    }
+    else{
+        ESP_LOGE(TAG, "couldn't unlock mutex :(");
+    }
+    
+}
+
+void espnowCom_master_send_string(int slave_nbr, char *str){
+    static espnowCom_sendEvent evt = { 0 };
+    static espnowCom_DataStruct_String *datastruct;
+
+    if(slave_nbr >= ESPNOWCOM_MAX_SLAVES){
+        return;
+    }
+    memcpy((void *)evt.mac, (void *)slaves_Mac[slave_nbr], ESP_NOW_ETH_ALEN);
 
     evt.len = strlen(str) + 2;
     
