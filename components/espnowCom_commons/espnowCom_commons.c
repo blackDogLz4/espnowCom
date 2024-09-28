@@ -1,7 +1,11 @@
 /* myespnow.c */
 #include "espnowCom_commons.h"
 
-#define TAG "espnowCom_commons"
+#ifdef CONFIG_ESPNOWCOM_MASTERMODE
+    #define TAG "espnowCom_Master"
+#else
+    #define TAG "espnowCom_Slave"
+#endif
 
 // private variables
 static QueueHandle_t sendQueue;
@@ -10,7 +14,6 @@ static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 
 // send / receive Buffer
 static uint8_t *sendDataBuffer;
-static uint8_t *recvDataBuffer;
 
 static SemaphoreHandle_t sendmutex;
 
@@ -19,8 +22,8 @@ static SemaphoreHandle_t state_mutex;
 static int state_current = espnowCom_Sate_Connect;
 
 // private functions
-static void espnowCom_send_stringTask(void *);
-static void espnowCom_RecvTask(void *);
+static void espnowCom_send_stringTask(void *payload);
+static void espnowCom_RecvTask(void *payload);
 static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 
@@ -28,10 +31,11 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
 static void processData(char *str, espnowCom_DataStruct_Base *data_base);
 
 // connection functions
-void espnowCom_sendSlaveACK(uint8_t *mac);
+void espnowCom_sendSlaveACK(uint8_t *mac, uint8_t *payload);
 void espnowCom_sendMasterACK(uint8_t *mac);
 
 int espnowCom_init(){
+    uint8_t *payload;
 
     // initialize Wifi in AP_Mode
     ESP_LOGI(TAG, "Initialize Wifi");
@@ -61,7 +65,7 @@ int espnowCom_init(){
     }
 
     // initialize basic recv functionality
-    recvQueue = xQueueCreate(1, sizeof(espnowCom_recvEvent));
+    recvQueue = xQueueCreate(5, sizeof(espnowCom_recvEvent));
     if (recvQueue == NULL) {
         ESP_LOGE(TAG, "Create Quee fail");
         return ESP_FAIL;
@@ -95,18 +99,26 @@ int espnowCom_init(){
         ESP_ERROR_CHECK(false);
     }
 
-    // reserve memory for recv buffer
-    recvDataBuffer = calloc(ESPNOWCOM_MAX_DATA_LEN, sizeof(uint8_t));
-    if(recvDataBuffer == NULL){
-        ESP_LOGE(TAG, "couldn't reserve space for send Data!!");
-        ESP_ERROR_CHECK(false);
-    }
-
     ESP_ERROR_CHECK( esp_now_register_send_cb(_espnowCom_send_string_cb) );
     ESP_ERROR_CHECK( esp_now_register_recv_cb(_espnowCom_recv_cb) );
     
-    xTaskCreate(espnowCom_send_stringTask, "espnowCom_send_stringTask", 2048, NULL, 4, NULL);
-    xTaskCreate(espnowCom_RecvTask, "espnowCom_recvTask", 2048, NULL, 4, NULL);
+    
+
+    if(MASTER){
+        //create payload
+        payload = malloc(sizeof(uint8_t) * ESPNOWCOM_PAYLOADLEN);
+        if(payload == NULL){
+            ESP_LOGE(TAG, "couldn't reserve space for payload!!");
+            ESP_ERROR_CHECK(false);
+        }
+        esp_fill_random(payload, sizeof(uint8_t)*ESPNOWCOM_PAYLOADLEN);
+        xTaskCreate(espnowCom_send_stringTask, "espnowCom_send_stringTask", 2048, payload, 4, NULL);
+        xTaskCreate(espnowCom_RecvTask, "espnowCom_recvTask", 2048, payload, 4, NULL);
+    }
+    else{
+        xTaskCreate(espnowCom_send_stringTask, "espnowCom_send_stringTask", 2048, NULL, 4, NULL);
+        xTaskCreate(espnowCom_RecvTask, "espnowCom_recvTask", 2048, NULL, 4, NULL);
+    }
 
     return ESP_OK;
 }
@@ -136,8 +148,8 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
     }
 
     //set Buffer
-    evt.recv_data = (void *) recvDataBuffer;
-    datastruct = (espnowCom_DataStruct_Base *) recvDataBuffer;
+    evt.recv_data = malloc(sizeof(uint8_t) * len);
+    datastruct = (espnowCom_DataStruct_Base *) evt.recv_data;
     memcpy(evt.mac, mac_addr, ESP_NOW_ETH_ALEN);
 
     datastruct->type = data[0];
@@ -148,7 +160,7 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
         ESP_LOGW(TAG, "Send receive queue fail");
     }
 }
-static void espnowCom_send_stringTask(void *p){
+static void espnowCom_send_stringTask(void *payload){
    
     espnowCom_sendEvent evt;
     volatile espnowCom_States current = espnowCom_Sate_Connect;
@@ -159,6 +171,11 @@ static void espnowCom_send_stringTask(void *p){
     int ret;
     int cnt = 0;
     // send
+    if(MASTER){
+        mgmtData.type = espnowCom_DataType_Mgmt;
+        mgmtData.mgmt_type = espnowCom_MGMT_TYPE_DISCOVER;
+        memcpy(mgmtData.payload, payload, sizeof(uint8_t)*ESPNOWCOM_PAYLOADLEN);
+    }
     while(1){
         if(xSemaphoreTake(state_mutex, 1 / portTICK_PERIOD_MS)){
             current = state_current;
@@ -166,16 +183,9 @@ static void espnowCom_send_stringTask(void *p){
             xSemaphoreGive(state_mutex);
         }
 
-        mgmtData.type = espnowCom_DataType_Mgmt;
-        mgmtData.mgmt_type = espnowCom_MGMT_TYPE_DISCOVER;
-        mgmtData.payload[0] = 0xff;
-        mgmtData.payload[1] = 0x12;
-        mgmtData.payload[2] = 0x33;
-        mgmtData.payload[3] = 0x66;
-
-        switch(current){
-            case espnowCom_Sate_Connect:
-                if(MASTER == 1){
+        if(MASTER == 1){
+            switch(current){
+                case espnowCom_Sate_Connect:
                     
                     mgmtData.mgmt_count = cnt;
                     cnt++;
@@ -194,38 +204,59 @@ static void espnowCom_send_stringTask(void *p){
                         //espnowCom_deinit();
                     }
                     
-                    vTaskDelay(100 / portTICK_PERIOD_MS);
-                }
-                else{
+                    vTaskDelay(1000 / portTICK_PERIOD_MS);
+                    break;
+                case espnowCom_Sate_Run:
+                if (xQueueReceive(sendQueue, &evt, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+                        
+                        // just for visualisation
+                        data = (espnowCom_DataStruct_Base *) evt.send_data;
+                        processData("sending: ", data);
+
+                        ret = esp_now_send(evt.mac , (uint8_t*) evt.send_data, evt.len);
+                        if(ret != ESP_OK){
+                            ESP_LOGE(TAG, "Sending failed, %d", ret);
+                            //espnowCom_deinit();
+                        }
+                        //vTaskDelay(portTICK_PERIOD_MS);
+                    }
+                    break;
+            }
+        }
+
+        else{
+            switch(current){
+                case espnowCom_Sate_Connect:
                     ESP_LOGI(TAG, "Wait ...");
                     vTaskDelay(1000 / portTICK_PERIOD_MS);
-                }
-                break;
-            case espnowCom_Sate_Run:
-               if (xQueueReceive(sendQueue, &evt, 100 / portTICK_PERIOD_MS) == pdTRUE) {
-                    
-                    // just for visualisation
-                    data = (espnowCom_DataStruct_Base *) evt.send_data;
-                    processData("sending: ", data);
+                    break;
+                case espnowCom_Sate_Run:
+                if (xQueueReceive(sendQueue, &evt, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+                        
+                        // just for visualisation
+                        data = (espnowCom_DataStruct_Base *) evt.send_data;
+                        processData("sending: ", data);
 
-                    ret = esp_now_send(evt.mac , (uint8_t*) evt.send_data, evt.len);
-                    if(ret != ESP_OK){
-                        ESP_LOGE(TAG, "Sending failed, %d", ret);
-                        //espnowCom_deinit();
+                        ret = esp_now_send(evt.mac , (uint8_t*) evt.send_data, evt.len);
+                        if(ret != ESP_OK){
+                            ESP_LOGE(TAG, "Sending failed, %d", ret);
+                        }
                     }
-                    //vTaskDelay(portTICK_PERIOD_MS);
-                }
-                break;
+                    break;
+            }
         }
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }   
 }
-static void espnowCom_RecvTask(void *p){
+static void espnowCom_RecvTask(void *payload){
    
     espnowCom_recvEvent recvevt;
     volatile espnowCom_States current = espnowCom_Sate_Connect;
     espnowCom_DataStruct_Base *data;
     espnowCom_DataStruct_Mgmt *mgmtData;
+    uint8_t recv_payload[ESPNOWCOM_PAYLOADLEN];
+    uint8_t *payloadarray = (uint8_t *) payload;
+    int ret;
     // receive
     while(1){
         if(xSemaphoreTake(state_mutex, 1 / portTICK_PERIOD_MS)){
@@ -233,37 +264,62 @@ static void espnowCom_RecvTask(void *p){
             vTaskDelay(10 / portTICK_PERIOD_MS);
             xSemaphoreGive(state_mutex);
         }
-        switch(current){
-            case espnowCom_Sate_Connect:
-                
-                if(MASTER ==1){
+        if(MASTER){
+            switch(current){
+                case espnowCom_Sate_Connect:
+                    
                     if(xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
-                        // received connection ACK?
+                        // received connection ACK from Slave?
                         mgmtData = (espnowCom_DataStruct_Mgmt *) recvevt.recv_data;
                         if(mgmtData->type == espnowCom_DataType_Mgmt){
                             if(mgmtData->mgmt_type == espnowCom_MGMT_TYPE_CONNECT){
                                 ESP_LOGI(TAG, "got connection response!");
-                                 /* Add new peer information to peer list. */
-                                if(esp_now_is_peer_exist(recvevt.mac) != 1){
-                                    esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
-                                    if (peer == NULL) {
-                                        ESP_LOGE(TAG, "Malloc peer information fail");
+                                if( memcmp(payloadarray, mgmtData->payload, ESPNOWCOM_PAYLOADLEN) == 0){
+                                    ESP_LOGI(TAG, "Payload ok!");
+                                
+                                    /* Add new peer information to peer list. */
+                                    if(esp_now_is_peer_exist(recvevt.mac) != 1){
+                                        esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+                                        if (peer == NULL) {
+                                            ESP_LOGE(TAG, "Malloc peer information fail");
+                                        }
+                                        memset(peer, 0, sizeof(esp_now_peer_info_t));
+                                        peer->channel = 0;
+                                        peer->ifidx = ESP_IF_WIFI_STA;
+                                        peer->encrypt = false;
+                                        memcpy(peer->peer_addr, recvevt.mac, ESP_NOW_ETH_ALEN);
+                                        esp_now_add_peer(peer);
+                                        free(peer);                                
                                     }
-                                    memset(peer, 0, sizeof(esp_now_peer_info_t));
-                                    peer->channel = 0;
-                                    peer->ifidx = ESP_IF_WIFI_STA;
-                                    peer->encrypt = false;
-                                    memcpy(peer->peer_addr, recvevt.mac, ESP_NOW_ETH_ALEN);
-                                    esp_now_add_peer(peer);
-                                    free(peer);                                
+                                    espnowCom_sendMasterACK(recvevt.mac);
+                                    espnowCom_switchMode(espnowCom_Sate_Run);
+                                    free(recvevt.recv_data);
                                 }
-                                espnowCom_sendMasterACK(recvevt.mac);
-                                espnowCom_switchMode(espnowCom_Sate_Run);
+                                else{
+                                    ESP_LOGE(TAG, "Wrong Payload");
+                                    ESP_LOGI(TAG, "payload recv:  0x%x 0x%x 0x%x 0x%x", mgmtData->payload[0], mgmtData->payload[1], mgmtData->payload[2], mgmtData->payload[3]);
+                                    ESP_LOGI(TAG, "payload expected:  0x%x 0x%x 0x%x 0x%x", payloadarray[0], payloadarray[1], payloadarray[2], payloadarray[3]);
+                                }
                             }
+                            
                         }
                     }
-                }
-                else{
+                    break;
+                case espnowCom_Sate_Run:
+                    if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
+                        data = (espnowCom_DataStruct_Base *) recvevt.recv_data;
+                        // just for visualisation
+                        processData("received", data);
+                        free(recvevt.recv_data);
+                    }
+                    break;
+                break;
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+            }
+        }
+        else{
+            switch(current){
+                case espnowCom_Sate_Connect:
                     if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
                         mgmtData = (espnowCom_DataStruct_Mgmt *) recvevt.recv_data;
                         if(mgmtData->type == espnowCom_DataType_Mgmt){
@@ -284,7 +340,9 @@ static void espnowCom_RecvTask(void *p){
                                     esp_now_add_peer(peer);
                                     free(peer);                                
                                 }
-                                espnowCom_sendSlaveACK(recvevt.mac);
+                                memcpy(recv_payload, mgmtData->payload, sizeof(uint8_t) * ESPNOWCOM_PAYLOADLEN);
+                                espnowCom_sendSlaveACK(recvevt.mac, recv_payload);
+                                free(recvevt.recv_data);
                             }
                             else if(mgmtData->mgmt_type == espnowCom_MGMT_TYPE_CONNECTED){
                                 ESP_LOGI(TAG, "Conected!!");
@@ -292,28 +350,30 @@ static void espnowCom_RecvTask(void *p){
                             }
                         }
                     }
-                }
+                    break;
+                case espnowCom_Sate_Run:
+                    if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
+                        data = (espnowCom_DataStruct_Base *) recvevt.recv_data;
+                        // just for visualisation
+                        processData("received", data);
+                        free(recvevt.recv_data);
+                    }
+                    break;
                 break;
-            case espnowCom_Sate_Run:
-                if (xQueueReceive(recvQueue, &recvevt, 100 / portTICK_PERIOD_MS) == pdTRUE){
-                    data = (espnowCom_DataStruct_Base *) recvevt.recv_data;
-                    // just for visualisation
-                    processData("received", data);
-                }
-                break;
-            break;
-        vTaskDelay(1 / portTICK_PERIOD_MS);
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+            }
         }
     }   
 }
 /* function to send ack from slave*/
-void espnowCom_sendSlaveACK(uint8_t *mac){
+void espnowCom_sendSlaveACK(uint8_t *mac, uint8_t *payload){
     espnowCom_DataStruct_Mgmt slaveResponse;
     int ret;
     slaveResponse.type = espnowCom_DataType_Mgmt;
     slaveResponse.mgmt_type = espnowCom_MGMT_TYPE_CONNECT;
+    memcpy(slaveResponse.payload, payload, sizeof(uint8_t) * ESPNOWCOM_PAYLOADLEN);
     processData("sending", &slaveResponse);
-    ret = esp_now_send(mac, (uint8_t*) &slaveResponse, sizeof(sizeof(slaveResponse)));
+    ret = esp_now_send(mac, (uint8_t*) &slaveResponse, sizeof(slaveResponse));
     if(ret != ESP_OK){
         ESP_LOGE(TAG, "Sending failed, %d", ret);
         ESP_LOGI(TAG, "0x%x 0x%x 0x%x 0x%x 0x%x 0x%x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -440,9 +500,11 @@ static void processData(char *str, espnowCom_DataStruct_Base *data_base){
             switch(data_mgmt->mgmt_type){
                 case espnowCom_MGMT_TYPE_DISCOVER:
                     ESP_LOGI(TAG, "%s DISCOVER req, cnt: %d", str, data_mgmt->mgmt_count);
+                    ESP_LOGI(TAG, "payload:  0x%x 0x%x 0x%x 0x%x", data_mgmt->payload[0], data_mgmt->payload[1], data_mgmt->payload[2], data_mgmt->payload[3]); 
                     break;
                 case espnowCom_MGMT_TYPE_CONNECT:
                     ESP_LOGI(TAG, "%s CONNECT req", str);
+                    ESP_LOGI(TAG, "payload:  0x%x 0x%x 0x%x 0x%x", data_mgmt->payload[0], data_mgmt->payload[1], data_mgmt->payload[2], data_mgmt->payload[3]); 
                     break;
             }
     }

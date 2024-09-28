@@ -43,12 +43,13 @@ typedef struct{
 }espnowCom_DataStruct_String;
 
 // espnowCom datastruct
+#define ESPNOWCOM_PAYLOADLEN 4
 typedef struct{
     uint8_t type;
     
     uint8_t mgmt_type;
     uint8_t mgmt_count;
-    uint8_t payload[4];
+    uint8_t payload[ESPNOWCOM_PAYLOADLEN];
 }espnowCom_DataStruct_Mgmt;
 
 // enum mgmt_type

@@ -400,6 +400,13 @@ CONFIG_ESPNOW_SEND_LEN=10
 # end of Example Configuration
 
 #
+# EspnowCom configuration
+#
+CONFIG_ESPNOWCOM_MASTERMODE=y
+# CONFIG_ESPNOWCOM_SLAVEMODE is not set
+# end of EspnowCom configuration
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y

@@ -16,12 +16,16 @@
 #include "esp_system.h"
 #include "esp_now.h"
 #include "esp_crc.h"
+#include "esp_random.h"
 #include "espnowComDataStructures.h"
 
 #define ESPNOW_QUEUE_SIZE 30
 #define ESPNOWCOM_MAX_DATA_LEN 255
+#ifdef CONFIG_ESPNOWCOM_MASTERMODE
 #define MASTER 1
-
+#else
+#define MASTER 0
+#endif
 // Data structures
 // send event stores:
 //          mac -- mac to send Data to
@@ -47,9 +51,16 @@ typedef enum {
 //functions
 int espnowCom_init();
 void espnowCom_switchMode(espnowCom_States state);
-void espnowCom_send_string(char *str);
-void espnowCom_send_float(float fl);
 
+// Send functions master
+#ifdef CONFIG_ESPNOWCOM_MASTERMODE
+    void espnowCom_send_string(char *str);
+    void espnowCom_send_float(float fl);
+// Send functions slave
+#else
+    void espnowCom_send_string(char *str);
+    void espnowCom_send_float(float fl);
+#endif
 void espnowCom_deinit();
 
 

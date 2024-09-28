@@ -1,0 +1,14 @@
+menu "EspnowCom configuration"
+
+    choice ESP_MASTER_SLAVE
+        prompt "Select Master or Slave mode"
+        help
+            WiFi mode(station or softap).
+
+        config ESPNOWCOM_MASTERMODE
+            bool "Master mode"
+        config ESPNOWCOM_SLAVEMODE
+            bool "Slave mode"
+    endchoice
+
+endmenu
