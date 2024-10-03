@@ -29,7 +29,7 @@
 #include "esp_now.h"
 #include "esp_crc.h"
 #include "espnow_example.h"
-#include "espnowCom_commons.h"
+#include "espnowCom_Master.h"
 
 #define TAG "Main"
 void app_main(void)
@@ -44,18 +44,18 @@ void app_main(void)
 
     espnowCom_init();
 
-    while(1){
+    // while(1){
 
-            for(int i = 0; i<5; i++){
-                ESP_LOGI(TAG, "request send Hey");
-                espnowCom_master_send_string(0, "Hey");
-                vTaskDelay(50 / portTICK_PERIOD_MS);  // Small delay after sending string
-                espnowCom_master_send_float(0, 0.05);
-                vTaskDelay(1000 / portTICK_PERIOD_MS);
-            }
-            // ESP_LOGW(TAG, "switch mode");
-            // espnowCom_switchMode(espnowCom_Sate_Run);
-            // vTaskDelay(5000/portTICK_PERIOD_MS);
-            // espnowCom_switchMode(espnowCom_Sate_Connect);
-    }
+    //         for(int i = 0; i<5; i++){
+    //             ESP_LOGI(TAG, "request send Hey");
+    //             espnowCom_master_send_string(0, "Hey");
+    //             vTaskDelay(50 / portTICK_PERIOD_MS);  // Small delay after sending string
+    //             espnowCom_master_send_float(0, 0.05);
+    //             vTaskDelay(1000 / portTICK_PERIOD_MS);
+    //         }
+    //         // ESP_LOGW(TAG, "switch mode");
+    //         // espnowCom_switchMode(espnowCom_Sate_Run);
+    //         // vTaskDelay(5000/portTICK_PERIOD_MS);
+    //         // espnowCom_switchMode(espnowCom_Sate_Connect);
+    // }
 }
