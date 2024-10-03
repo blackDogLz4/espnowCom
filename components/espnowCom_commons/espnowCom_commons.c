@@ -9,7 +9,9 @@
 
 // private variables
 static QueueHandle_t sendQueue;
-static QueueHandle_t recvQueue; 
+static QueueHandle_t recvQueue;
+static QueueHandle_t recvQueueData;
+
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t master_Mac[ESP_NOW_ETH_ALEN] = {};
 static uint8_t **slaves_Mac;
@@ -29,6 +31,8 @@ static void espnowCom_RecvTask(void *payload);
 static void _espnowCom_send_string_cb(const uint8_t *mac_addr, esp_now_send_status_t status);
 static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len);
 int espnowCom_addSlave(uint8_t *mac);
+void espnowCom_addMaster(uint8_t *mac);
+
 // parse DataStructs
 static void processData(char *str, espnowCom_DataStruct_Base *data_base);
 
@@ -72,6 +76,15 @@ int espnowCom_init(){
         ESP_LOGE(TAG, "Create Quee fail");
         return ESP_FAIL;
     }
+
+    // queue for received Data
+    recvQueueData = xQueueCreate(10, sizeof(espnowCom_recvEvent));
+    if (recvQueueData == NULL) {
+        ESP_LOGE(TAG, "Create Quee fail");
+        return ESP_FAIL;
+    }
+
+
     // create mutex for state switching
     state_mutex = xSemaphoreCreateMutex();
 
@@ -164,7 +177,7 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
     memcpy(datastruct->data, &data[1], len-1);
     
     evt.len = len;
-    if (xQueueSend(recvQueue, &evt, portTICK_PERIOD_MS) != pdTRUE) {
+    if (xQueueSend(recvQueue, &evt, 1 / portTICK_PERIOD_MS) != pdTRUE) {
         ESP_LOGW(TAG, "Send receive queue fail");
     }
 }
@@ -287,6 +300,7 @@ static void espnowCom_RecvTask(void *payload){
                                 
                                     // stop when all slaves are added
                                     if(espnowCom_addSlave(recvevt.mac)){
+                                        espnowCom_sendMasterACK(recvevt.mac);
                                         espnowCom_switchMode(espnowCom_Sate_Run);
                                     }
                                     else{
@@ -324,21 +338,9 @@ static void espnowCom_RecvTask(void *payload){
                         if(mgmtData->type == espnowCom_DataType_Mgmt){
                             if(mgmtData->mgmt_type == espnowCom_MGMT_TYPE_DISCOVER){
                                 ESP_LOGI(TAG, "Conection request %d", mgmtData->mgmt_count);
-                            
-                                /* Add new peer information to peer list. */
-                                if(esp_now_is_peer_exist(recvevt.mac) != 1){
-                                    esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
-                                    if (peer == NULL) {
-                                        ESP_LOGE(TAG, "Malloc peer information fail");
-                                    }
-                                    memset(peer, 0, sizeof(esp_now_peer_info_t));
-                                    peer->channel = 0;
-                                    peer->ifidx = ESP_IF_WIFI_STA;
-                                    peer->encrypt = false;
-                                    memcpy(peer->peer_addr, recvevt.mac, ESP_NOW_ETH_ALEN);
-                                    esp_now_add_peer(peer);
-                                    free(peer);                                
-                                }
+
+                                espnowCom_addMaster(recvevt.mac);
+
                                 memcpy(recv_payload, mgmtData->payload, sizeof(uint8_t) * ESPNOWCOM_PAYLOADLEN);
                                 espnowCom_sendSlaveACK(recvevt.mac, recv_payload);
                                 free(recvevt.recv_data);
@@ -355,7 +357,21 @@ static void espnowCom_RecvTask(void *payload){
                         data = (espnowCom_DataStruct_Base *) recvevt.recv_data;
                         // just for visualisation
                         processData("received", data);
-                        free(recvevt.recv_data);
+
+                        if(data->type == espnowCom_DataType_Mgmt){
+                            mgmtData = (espnowCom_DataStruct_Mgmt *) data;
+                            if(data->type == espnowCom_MGMT_TYPE_DISCOVER && memcmp(master_Mac, recvevt.mac, ESP_NOW_ETH_ALEN) == 0){
+                                // master propably reseted or waiting for other devices
+                                memcpy(recv_payload, mgmtData->payload, sizeof(uint8_t) * ESPNOWCOM_PAYLOADLEN);
+                                espnowCom_sendSlaveACK(recvevt.mac, recv_payload);
+                            } 
+                            free(recvevt.recv_data);
+                        }
+                        else{
+                            // put Data on Data queue to be received by user
+                            xQueueSend(recvQueueData, &recvevt, 10 / portTICK_PERIOD_MS);
+                            //note recvevt.recv_data needs to bee freed 
+                        }
                     }
                     break;
                 break;
@@ -413,7 +429,25 @@ int espnowCom_addSlave(uint8_t *mac){
     }
     return 0;
 }
+void espnowCom_addMaster(uint8_t *mac){
+    
+    esp_now_peer_info_t *peer = malloc(sizeof(esp_now_peer_info_t));
+    /* Add new peer information to peer list. */
+    if(esp_now_is_peer_exist(mac) != 1){
+        memcpy(master_Mac, mac, ESP_NOW_ETH_ALEN);
 
+        if (peer == NULL) {
+            ESP_LOGE(TAG, "Malloc peer information fail");
+        }
+        memset(peer, 0, sizeof(esp_now_peer_info_t));
+        peer->channel = 0;
+        peer->ifidx = ESP_IF_WIFI_STA;
+        peer->encrypt = false;
+        memcpy(peer->peer_addr, mac, ESP_NOW_ETH_ALEN);
+        esp_now_add_peer(peer);
+        free(peer);                                
+    }
+}
 /* function to send ack from master*/
 void espnowCom_sendMasterACK(uint8_t *mac){
     espnowCom_DataStruct_Mgmt slaveResponse;
@@ -441,7 +475,7 @@ void espnowCom_switchMode(espnowCom_States state){
     }
 }
 
-void espnowCom_send_string(char *str){
+void espnowCom_slave_send_string(char *str){
     static espnowCom_sendEvent evt = { 0 };
     static espnowCom_DataStruct_String *datastruct;
     // broadcast string
@@ -514,7 +548,44 @@ void espnowCom_master_send_string(int slave_nbr, char *str){
     
 }
 
-void espnowCom_send_float(float fl){
+void espnowCom_master_send_float(int slave_nbr, float fl){
+    static espnowCom_sendEvent evt = { 0 };
+    static espnowCom_DataStruct_Float *datastruct;
+    
+    if(slave_nbr >= ESPNOWCOM_MAX_SLAVES){
+        return;
+    }
+    memcpy((void *)evt.mac, (void *)slaves_Mac[slave_nbr], ESP_NOW_ETH_ALEN);
+
+    evt.len = sizeof(espnowCom_DataStruct_Float);
+    
+    if(evt.len > ESPNOWCOM_MAX_DATA_LEN){
+        ESP_LOGE(TAG, "Too much Data to send!!");
+        return;
+    }
+
+    //write Data to Buffer
+    //  get mutex
+    if(xSemaphoreTake(sendmutex, portMAX_DELAY)){
+        evt.send_data = (void *) sendDataBuffer;
+        datastruct = (espnowCom_DataStruct_Float *) sendDataBuffer;
+
+        datastruct->type = espnowCom_DataType_Float;
+        datastruct->nbr = fl;
+
+        if (xQueueSend(sendQueue, &evt, portMAX_DELAY) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to send data to queue.");
+        }
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+        // data on queue soo all ayt
+        xSemaphoreGive(sendmutex);
+    }
+    else{
+        ESP_LOGE(TAG, "couldn't unlock mutex :(");
+    }
+}
+
+void espnowCom_slave_send_float(float fl){
     static espnowCom_sendEvent evt = { 0 };
     static espnowCom_DataStruct_Float *datastruct;
     // broadcast string

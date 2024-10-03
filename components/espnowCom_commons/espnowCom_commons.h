@@ -56,11 +56,11 @@ void espnowCom_switchMode(espnowCom_States state);
 // Send functions master
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
     void espnowCom_master_send_string(int slave_nbr, char *str);
-    void espnowCom_send_float(float fl);
+    void espnowCom_master_send_float(int slave_nbr, float fl);
 // Send functions slave
 #else
-    void espnowCom_send_string(char *str);
-    void espnowCom_send_float(float fl);
+    void espnowCom_slave_send_string(char *str);
+    void espnowCom_slave_send_float(float fl);
 #endif
 void espnowCom_deinit();
 
