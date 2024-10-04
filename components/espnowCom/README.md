@@ -48,24 +48,41 @@ Once the component is set up and configured, include it in your code by calling 
 In master mode, you can send data to slaves, ping slaves to check if they are online, and register callbacks for receiving data.
 
 ```c
+#include "nvs_flash.h"
 #include "espnowCom.h"
 
-void app_main() {
-    // Initialize ESPNOW in master mode
+#define TAG "Main"
+
+void recv_handler(int type, int slave, void *data, int len){
+    char *str;
+    str = (char*) data;
+    ESP_LOGI(TAG, "from %d, %s", slave, str);
+}
+
+void app_main(void)
+{
+    // Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK( nvs_flash_erase() );
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+
+    // Initialize espnowCom
     espnowCom_init();
 
-    // Send data to slave
-    const char* msg = "Hello from Master";
-    espnowCom_send(0, 1, (void*)msg, strlen(msg));
+    vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    // Register a callback to receive data
-    espnowCom_addRecv_cb(1, master_receive_callback);
+    // add receiv handler
+    espnowCom_addRecv_cb(1, &recv_handler);
+    while(1){
+        // send HALLO to slave 0 every second
+        espnowCom_send(0, 0, (void *)"HALLO\n", 10);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 }
 
-void master_receive_callback(int type, int slave, void* data) {
-    printf("Received data from slave: %s
-", (char*)data);
-}
 ```
 
 #### In Slave Mode:
@@ -73,20 +90,40 @@ void master_receive_callback(int type, int slave, void* data) {
 In slave mode, the device listens for data from the master and responds accordingly.
 
 ```c
+#include "nvs_flash.h"
 #include "espnowCom.h"
 
-void app_main() {
-    // Initialize ESPNOW in slave mode
+#define TAG "Main-Slave"
+
+void handlerfunc(int type, void *data, int len){
+    char* str;
+    str = (char* )data;
+
+    ESP_LOGI(TAG, "received %s", str);
+}
+
+void app_main(void)
+{
+ 
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK( nvs_flash_erase() );
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+    
     espnowCom_init();
 
-    // Register a callback to receive data
-    espnowCom_addRecv_cb(1, slave_receive_callback);
+     
+    // temporary add later slaves connected function or something like that
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    espnowCom_addRecv_cb(0, &handlerfunc);
+    while(1){
+        espnowCom_send(1, "Hey", 4);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 }
 
-void slave_receive_callback(int type, void* data, int len) {
-    printf("Received data from master: %s
-", (char*)data);
-}
 ```
 
 ### 4. Build and Flash
