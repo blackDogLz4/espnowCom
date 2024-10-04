@@ -32,6 +32,13 @@
 #include "espnowCom.h"
 
 #define TAG "Main"
+
+void recv_handler(int type, int slave, void *data, int len){
+    char *str;
+    str = (char*) data;
+    ESP_LOGI(TAG, "from %d, %s", slave, str);
+}
+
 void app_main(void)
 {
     // Initialize NVS
@@ -46,8 +53,9 @@ void app_main(void)
 
     // temporary add later slaves connected function or something like that
     vTaskDelay(100 / portTICK_PERIOD_MS);
+    espnowCom_addRecv_cb(1, &recv_handler);
     while(1){
         espnowCom_send(0, 0, (void *)"HALLO\n", 10);
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }

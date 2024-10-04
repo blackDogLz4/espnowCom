@@ -235,7 +235,8 @@ int espnowCom_send(int type, void *data, int size){
  * 
  * @param type          type of data the function should be used for (0 to 29)
  * @param cb_function   function that is called after data is received
- * bps: void myfn(int type, int slave, void* data)
+ * bps: void myfn(int type, int slave, void* data, int len) (Master)
+ * bsp: void myfn(int type, void *data, int len) (Slave)
  * @return              0 on success
  *                      1 type already connected to a function
  *                     -1 on failure
@@ -432,7 +433,7 @@ static void _espnowCom_com_handler(void *payload){
                         //function pointer already setup
                         if(user_receive_cb_fn[type] != NULL){
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
-                            user_receive_cb_fn[type](type, _espnowCom_MacToSlave(recvevt.mac), (void*) recvstruct->data);
+                            user_receive_cb_fn[type](type, _espnowCom_MacToSlave(recvevt.mac), (void*) recvstruct->data, recvevt.len);
 #else
                             user_receive_cb_fn[type](type, (void*) recvstruct->data, recvevt.len);
 #endif

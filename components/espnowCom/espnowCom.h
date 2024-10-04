@@ -34,7 +34,7 @@
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
 
     // callback functions
-    typedef void (*espnowCom_user_receive_cb) (int, int, void*);
+    typedef void (*espnowCom_user_receive_cb) (int, int, void*, int);
 
     // main function
     int espnowCom_init();
