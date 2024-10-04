@@ -2,7 +2,7 @@
 # in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
-set(EXTRA_COMPONENT_DIRS "components/espnowCom_Master")
+set(EXTRA_COMPONENT_DIRS "components/espnowCom")
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 project(esp-master)

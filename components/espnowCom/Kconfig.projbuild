@@ -1,0 +1,107 @@
+menu "EspnowCom configuration"
+
+    choice ESP_MASTER_SLAVE
+        prompt "Select Master or Slave mode"
+        help
+            WiFi mode(station or softap).
+
+        config ESPNOWCOM_MASTERMODE
+            bool "Master mode"
+        config ESPNOWCOM_SLAVEMODE
+            bool "Slave mode"
+    endchoice
+
+    config ESPNOWCOM_MASTERNAME
+        depends on ESPNOWCOM_MASTERMODE
+        string "Master Name"
+        default "master"
+        help
+            sets the name of the master which is sent to the slaves
+    
+    config ESPNOWCOM_SLAVENAME
+        depends on ESPNOWCOM_SLAVEMODE
+        string "Slave Name"
+        default "slave"
+        help
+            sets the name of the slave which is sent to the master
+    
+    config ESPNOWCOM_MAX_SLAVES
+        depends on ESPNOWCOM_MASTERMODE
+        int "Max Slaves"
+        default 1
+        range 0 255
+        help
+            max. slaves that can connect to master,
+            note: discovery of the slaves will run until all max slaves are connected
+    
+    config ESPNOWCOM_PAYLOADLEN
+        depends on ESPNOWCOM_MASTERMODE
+        int "payload len"
+        default 4
+        range 4 30
+        help
+            defines the payload sent management communication
+
+    config ESPNOWCOM_PING_INTERVAL
+        depends on ESPNOWCOM_MASTERMODE
+        int "ping intervall"
+        default 1000 
+        range 100 10000
+        help
+            defines how often a ping is sent to the slaves to check if they are still online
+
+    config ESPNOWCOM_QUEUE_LEN
+        int "Send / receive queue length"
+        default 5
+        range 1 30
+        help
+            defines how many entries can be stored on the queue before it is full
+    
+    config ESPNOWCOM_MAX_CB_FUNCTIONS
+        int "max callback functions"
+        default 5
+        range 1 50
+        help
+            defines how many callbackfunctions can be added
+
+    choice ESPNOWCOM_WIFI_MODE
+        prompt "WiFi mode"
+        default ESPNOW_WIFI_MODE_STATION
+        help
+            WiFi mode(station or softap).
+        config CONFIG_ESPNOWCOM_WIFI_MODE_STATION
+            bool "Station"
+        config ESPNOWCOM_WIFI_MODE_STATION_SOFTAP
+            bool "Softap"
+    endchoice
+
+    config ESPNOWCOM_PMK
+        string "ESPNOW primary master key"
+        default "pmk1234567890123"
+        help
+            ESPNOW primary master for the example to use. The length of ESPNOW primary master must be 16 bytes.
+
+    config ESPNOWCOM_LMK
+        string "ESPNOW local master key"
+        default "lmk1234567890123"
+        help
+            ESPNOW local master for the example to use. The length of ESPNOW local master must be 16 bytes.
+
+    config ESPNOWCOM_CHANNEL
+        int "Channel"
+        default 1
+        range 0 14
+        help
+            The channel on which sending and receiving ESPNOW data.
+
+    config ESPNOWCOM_ENABLE_LONG_RANGE
+        bool "Enable Long Range"
+        default "n"
+        help
+            When enable long range, the PHY rate of ESP32 will be 512Kbps or 256Kbps
+
+    config ESPNOWCOM_DEBUG
+        bool "Enable Debug outputs"
+        default "n"
+
+endmenu

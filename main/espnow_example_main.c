@@ -29,7 +29,7 @@
 #include "esp_now.h"
 #include "esp_crc.h"
 #include "espnow_example.h"
-#include "espnowCom_Master.h"
+#include "espnowCom.h"
 
 #define TAG "Main"
 void app_main(void)
