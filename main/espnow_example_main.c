@@ -44,18 +44,10 @@ void app_main(void)
 
     espnowCom_init();
 
-    // while(1){
-
-    //         for(int i = 0; i<5; i++){
-    //             ESP_LOGI(TAG, "request send Hey");
-    //             espnowCom_master_send_string(0, "Hey");
-    //             vTaskDelay(50 / portTICK_PERIOD_MS);  // Small delay after sending string
-    //             espnowCom_master_send_float(0, 0.05);
-    //             vTaskDelay(1000 / portTICK_PERIOD_MS);
-    //         }
-    //         // ESP_LOGW(TAG, "switch mode");
-    //         // espnowCom_switchMode(espnowCom_Sate_Run);
-    //         // vTaskDelay(5000/portTICK_PERIOD_MS);
-    //         // espnowCom_switchMode(espnowCom_Sate_Connect);
-    // }
+    // temporary add later slaves connected function or something like that
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    while(1){
+        espnowCom_send(0, 0, (void *)"HALLO\n", 10);
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
 }

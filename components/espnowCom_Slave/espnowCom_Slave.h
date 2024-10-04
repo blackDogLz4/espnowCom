@@ -20,5 +20,7 @@
 #define MAX_SLAVES 1
 
 int espnowCom_init();
+int espnowCom_send(int type, void *data, int size);
+int espnowCom_addRecv_cb(int type, void (*cb_function) (int, void*, int));
 
 #endif

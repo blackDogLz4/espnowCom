@@ -1,6 +1,7 @@
 #include "espnowCom_Slave.h"
 
 #define TAG "espnowCom_Slave"
+#define DEBUG 1
 
 #define SLAVENAME "FRANZI"
 
@@ -20,6 +21,9 @@ static void _espnowCom_com_handler(void *payload);
 int  _espnowCom_addMaster(uint8_t *mac, char name[]);
 void _espnowCom_ACKMaster(uint8_t *mac, void *payload);
 void _espnowCom_pingMaster(void *payload);
+
+// user receiv_cb function array
+void (*user_receive_cb_fn[30]) (int, void*, int) = { NULL };
 
 /**
  *  @brief espnowCom_init
@@ -73,6 +77,72 @@ int espnowCom_init(){
 }
 
 /**
+ * @brief espnowCom_send
+ * 
+ * function to send any data to master
+ * 
+ * @param type   to indicate what the data is
+ * @param data   data to send 
+ * @param size   size of data to send
+ * 
+ * @return 0     on success
+ *        -1     error
+ */
+int espnowCom_send(int type, void *data, int size){
+    espnowCom_sendEvent sendevt;
+    espnowCom_DataStruct_Base *datastruct;
+    
+    // allocate memory
+    datastruct = malloc(size + 1);
+    if(datastruct == NULL){
+        ESP_LOGE(TAG, "couldn't allocate memory for datastruct");
+        return -1;
+    }
+
+    //prepeare data
+    datastruct->type = espnowCom_DataType_Mgmt + type + 1;
+    memcpy(datastruct->data, data, size);
+
+    sendevt.len = size + 1;
+    memcpy(sendevt.mac, master_Mac, ESP_NOW_ETH_ALEN);
+    sendevt.send_data = (void*) datastruct;
+    
+    // put on Queue to send
+    if(xQueueSend(sendQueue, &sendevt, 10 / portTICK_PERIOD_MS) != pdTRUE){
+        if(DEBUG)
+            ESP_LOGE(TAG, "send queue full!");
+        return -1;
+    }
+    return 0;
+}
+/**
+ * @brief espnowCom_addRecv_cb()
+ * 
+ * function to add a callback function when data of @type is received
+ * 
+ * @param type          type of data the function should be used for (0 to 29)
+ * @param cb_function   function that is called after data is received
+ * bsp: void myfn(int type, void* data, int size)
+ * @return              0 on success
+ *                      1 type already connected to a function
+ *                     -1 on failure
+ */
+
+int espnowCom_addRecv_cb(int type, void (*cb_function) (int, void*, int)){
+    //type not OK!!
+    if(type < 0 || type >= 30){
+        ESP_LOGE(TAG, "type not in Range!!");
+        return -1;
+    }
+    if(user_receive_cb_fn[type] != NULL){
+        ESP_LOGW(TAG, "type already connected to function");
+        return 1;
+    }
+    user_receive_cb_fn[type] = cb_function;
+    return 0;
+}
+
+/**
  * @brief _espnowCom_send_cb
  * 
  *  function gets called after data is sent with espnow
@@ -98,7 +168,6 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
 {
     uint8_t * mac_addr;
     espnowCom_recvEvent evt;
-    espnowCom_DataStruct_Base *datastruct;
     
     if (recv_info->src_addr == NULL || data == NULL || len <= 0) {
         ESP_LOGE(TAG, "Receive cb arg error");
@@ -123,10 +192,9 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
         evt.broadcast = false;
     }
 
-    // link datastruct to evt.recv_data and copy data + type
-    datastruct = (espnowCom_DataStruct_Base *) evt.recv_data;
-    datastruct->type = data[0];
-    memcpy(datastruct->data, &data[1], len-1);
+    // just copy the data
+    memcpy((void*)evt.recv_data, data, len);
+
     evt.len = len;
 
     if (xQueueSend(recvQueue, &evt, 1 / portTICK_PERIOD_MS) != pdTRUE) {
@@ -140,13 +208,16 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
  * here the magic happens...
  * 
  */
-static void _espnowCom_com_handler(){
+static void _espnowCom_com_handler(void *payload){
     
     espnowCom_DataStruct_Base *recvstruct;
+    espnowCom_DataStruct_Base user_recvstruct;
     espnowCom_DataStruct_Mgmt *mgmt_recvstruct;
     espnowCom_DataStruct_Mgmt  mgmt_sendstruct;
     espnowCom_recvEvent        recvevt;
+    espnowCom_sendEvent        sendevt;
 
+    uint8_t type;
     uint8_t ret;
     bool    broadcast = true;
 
@@ -166,29 +237,59 @@ static void _espnowCom_com_handler(){
                         // Add to peer list and send response
                         ret = _espnowCom_addMaster(recvevt.mac, mgmt_recvstruct->name);
                         vTaskDelay(10 / portTICK_PERIOD_MS);
-                        if(ret == 0){
+                        if(ret > 0){
                             _espnowCom_ACKMaster(recvevt.mac, mgmt_recvstruct->payload);
                             broadcast = 0;
                         }
-                        break;
                     }
                     else if(mgmt_recvstruct->mgmt_type == espnowCom_MGMT_TYPE_PING){
                         // check just ping back
-                        memcpy(mgmt_recvstruct->name, SLAVENAME, 10);
                         if(!broadcast){
-                            
-                            ESP_LOGI(TAG, "got pinged by master");
+                            if(DEBUG)
+                                ESP_LOGI(TAG, "got pinged by master");
+                            memcpy(mgmt_recvstruct->name, SLAVENAME, ESPNOW_NAME_LEN);
                             ret = esp_now_send(master_Mac, (uint8_t *) mgmt_recvstruct, sizeof(espnowCom_DataStruct_Mgmt));
                             if(ret != ESP_OK){
                                 ESP_LOGW("TAG", "Couldn't reply ping!");
                             }
                         }
-                        break;
+                        // master sending ping --> propably went offline
+                        else{
+                            // Add to peer list
+                            ret = _espnowCom_addMaster(recvevt.mac, mgmt_recvstruct->name);
+                            vTaskDelay(10 / portTICK_PERIOD_MS);
+                            if(ret == 0){
+                                broadcast = 0;
+                            }
+                        }
+                    }
+                    //free(recvevt.recv_data);
+                    break;
+                // receive user data    
+                default:
+                    if(DEBUG)
+                        ESP_LOGI(TAG, "Received user Data");
+
+                    recvstruct = (espnowCom_DataStruct_Base *) recvevt.recv_data;
+                    type = recvstruct->type - espnowCom_DataType_Mgmt - 1;
+                    
+                    if(type < 30){
+                        //function pointer already setup
+                        
+                        if(user_receive_cb_fn[type] != NULL){
+                            user_receive_cb_fn[type](type, (void*) recvstruct->data, recvevt.len);
+                        }
+                        else{
+                            if(DEBUG)
+                                ESP_LOGI(TAG, "no handler for received Data!");
+                        }
                     }
             }
-            free(recvevt.recv_data);
         }    
         // send userData
+        if(xQueueReceive(sendQueue, &sendevt, 10 / portTICK_PERIOD_MS) == pdTRUE){
+            esp_now_send(sendevt.mac, sendevt.send_data, sendevt.len);
+        }
     }
 }
 
@@ -198,7 +299,7 @@ static void _espnowCom_com_handler(){
  *  well adds a Slave to the esp_Slave array
  * 
  *  return 0 on success
- *  return 1 array full
+ *  return 1 master already added
  *  return -1 internall error
  */
 int _espnowCom_addMaster(uint8_t *mac, char name[]){

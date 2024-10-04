@@ -29,9 +29,7 @@ typedef struct {
 
 // Esp Now Datatypes
 typedef enum{
-    espnowCom_DataType_String,
-    espnowCom_DataType_Float,
-    espnowCom_DataType_Mgmt,
+    espnowCom_DataType_Mgmt
 }espnowCom_DataType;
 
 // Base Datastruct
