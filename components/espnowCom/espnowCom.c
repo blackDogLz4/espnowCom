@@ -237,6 +237,7 @@ int espnowCom_send(int type, void *data, int size){
  * @param cb_function   function that is called after data is received
  * bps: void myfn(int type, int slave, void* data, int len) (Master)
  * bsp: void myfn(int type, void *data, int len) (Slave)
+ * Note: *data must not be freed in the callback function
  * @return              0 on success
  *                      1 type already connected to a function
  *                     -1 on failure
@@ -443,6 +444,7 @@ static void _espnowCom_com_handler(void *payload){
                                 ESP_LOGI(TAG, "no handler for received Data!");
                         }
                     }
+                    free(recvevt.recv_data);
             }
         }
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
