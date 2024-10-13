@@ -66,8 +66,9 @@ In master mode, you can send data to slaves, ping slaves to check if they are on
 #include "nvs_flash.h"
 #include "espnowCom.h"
 
-#define TAG "Main"
+#define TAG "Main-Master"
 
+// function will be called when data with type 0 is received
 void recv_handler(int type, int slave, void *data, int len){
     char *str;
     str = (char*) data;
@@ -89,10 +90,11 @@ void app_main(void)
 
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
-    // add receiv handler
+    // register callback to type 0
     espnowCom_addRecv_cb(1, &recv_handler);
+    
     while(1){
-        // send "Hello world!" to the slave
+        // send "Hello world!" with type 0 to slave 0
         espnowCom_send(0, 0, (void *)"Hello world!\n", 15);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
@@ -129,11 +131,14 @@ void app_main(void)
     ESP_ERROR_CHECK( ret );
     
     espnowCom_init();
-
     vTaskDelay(100 / portTICK_PERIOD_MS);
-    espnowCom_addRecv_cb(0, &handlerfunc); // register callback to type 0
+
+    // register callback to type 0
+    espnowCom_addRecv_cb(0, &handlerfunc);
+    
     while(1){
-        espnowCom_send(1, "Hey", 4);
+        // send Hey with type 0 to the Master
+        espnowCom_send(0, "Hey", 4);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
