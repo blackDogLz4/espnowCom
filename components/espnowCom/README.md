@@ -29,6 +29,21 @@ git clone https://github.com/blackDogLz4/espnow/tree/main
 
 This will copy the component into your project's component folder.
 
+Afterwards you have to add it to your top-level CMakeLists.txt
+e.g:
+```CMAKE
+
+# The following lines of boilerplate have to be in your project's CMakeLists
+# in this exact order for cmake to work correctly
+cmake_minimum_required(VERSION 3.16)
+
+set(EXTRA_COMPONENT_DIRS "components/espnowCom")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+
+project(esp-master)
+
+```
+
 ### 2. Configure the Component
 
 Open the ESP-IDF configuration menu to configure your ESPNOW communication settings:
@@ -77,8 +92,8 @@ void app_main(void)
     // add receiv handler
     espnowCom_addRecv_cb(1, &recv_handler);
     while(1){
-        // send HALLO to slave 0 every second
-        espnowCom_send(0, 0, (void *)"HALLO\n", 10);
+        // send "Hello world!" to the slave
+        espnowCom_send(0, 0, (void *)"Hello world!\n", 15);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }
@@ -95,6 +110,7 @@ In slave mode, the device listens for data from the master and responds accordin
 
 #define TAG "Main-Slave"
 
+// function will be called when data with type 0 is received
 void handlerfunc(int type, void *data, int len){
     char* str;
     str = (char* )data;
@@ -114,10 +130,8 @@ void app_main(void)
     
     espnowCom_init();
 
-     
-    // temporary add later slaves connected function or something like that
     vTaskDelay(100 / portTICK_PERIOD_MS);
-    espnowCom_addRecv_cb(0, &handlerfunc);
+    espnowCom_addRecv_cb(0, &handlerfunc); // register callback to type 0
     while(1){
         espnowCom_send(1, "Hey", 4);
         vTaskDelay(1000 / portTICK_PERIOD_MS);
@@ -139,5 +153,5 @@ Make sure both Master and Slave devices are set up and communicating using the E
 
 ## License
 
-This component is licensed under [Your License Here].
+This component is licensed under GPL2.
 
