@@ -1,0 +1,9 @@
+# define Udev-rule based on USB-Port
+# find out all necessary infos with: udevadm info /dev/ttyUSBX 
+# and: dmesg
+
+# Master 
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_PATH}=="pci-0000:00:1a.0-usb-0:1.5.5:1.0", SYMLINK+="ttyESP-Now_Master"
+# Slave
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ENV{ID_PATH}=="pci-0000:00:1a.0-usb-0:1.5.6:1.0", SYMLINK+="ttyESP-Now_Slave"
+
