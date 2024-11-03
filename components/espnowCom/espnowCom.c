@@ -338,7 +338,7 @@ static void _espnowCom_com_handler(void *payload){
 
     while(1){        
         // receive
-        if(xQueueReceive(recvQueue, &recvevt, 10 / portTICK_PERIOD_MS) == pdTRUE){
+        if(xQueueReceive(recvQueue, &recvevt, 1 / portTICK_PERIOD_MS) == pdTRUE){
 
             recvstruct = (espnowCom_DataStruct_Base *) recvevt.recv_data;
 
@@ -447,6 +447,17 @@ static void _espnowCom_com_handler(void *payload){
                     free(recvevt.recv_data);
             }
         }
+        // send userData
+        if(xQueueReceive(sendQueue, &sendevt, 1 / portTICK_PERIOD_MS) == pdTRUE){
+            if(CONFIG_ESPNOWCOM_DEBUG){
+                recvstruct = (espnowCom_DataStruct_Base *) sendevt.send_data;
+                ESP_LOGI(TAG, "sending %d, %s, %d", recvstruct->type, (char*) recvstruct->data, sendevt.len);
+            }
+            esp_now_send(sendevt.mac, (uint8_t*) sendevt.send_data, sendevt.len);
+            // Todo check if it can be removed and data be freed
+            vTaskDelay(1 / portTICK_PERIOD_MS);
+            free(sendevt.send_data);
+        }
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
         // send mngmt
         if(xTaskGetTickCount() - Ticks_lasteExec > CONFIG_ESPNOWCOM_PING_INTERVAL / portTICK_PERIOD_MS){
@@ -471,17 +482,7 @@ static void _espnowCom_com_handler(void *payload){
             }
         }
 #endif
-        // send userData
-        if(xQueueReceive(sendQueue, &sendevt, 10 / portTICK_PERIOD_MS) == pdTRUE){
-            if(CONFIG_ESPNOWCOM_DEBUG){
-                recvstruct = (espnowCom_DataStruct_Base *) sendevt.send_data;
-                ESP_LOGI(TAG, "sending %d, %s, %d", recvstruct->type, (char*) recvstruct->data, sendevt.len);
-            }
-            esp_now_send(sendevt.mac, (uint8_t*) sendevt.send_data, sendevt.len);
-            // Todo check if it can be removed and data be freed
-            vTaskDelay(100 / portTICK_PERIOD_MS);
-            //free(sendevt.send_data);
-        }
+    //vTaskDelay(10 / portTICK_PERIOD_MS);
     }
 }
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE

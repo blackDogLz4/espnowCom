@@ -54,6 +54,8 @@ idf.py menuconfig
 
 Navigate to the **Component Config** and **ESPNOW Communication Component** to configure settings like Wi-Fi mode, long-range mode, and whether the device will function as a Master or Slave.
 
+**Note:** If the watchdog gets triggered either set disable it for CPU1 or increase the blocking time of xQueueReceive() functions in the _espnowCom_com_handler() function
+
 ### 3. Using the Component
 
 Once the component is set up and configured, include it in your code by calling the appropriate functions:
