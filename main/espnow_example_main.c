@@ -1,5 +1,6 @@
 #include "nvs_flash.h"
 #include "espnowCom.h"
+#include "driver/gpio.h"
 
 #define TAG "Main"
 
@@ -14,12 +15,21 @@ void app_main(void)
     }
     ESP_ERROR_CHECK( ret );
 
+    //Config Buildin LED
+    gpio_config_t Led = {};
+    Led.intr_type = GPIO_INTR_DISABLE;
+    Led.pin_bit_mask = 1<<2;
+    Led.mode = GPIO_MODE_OUTPUT;
+
+    gpio_config(&Led);
+
     // Initialize espnowCom
     espnowCom_init();
 
     vTaskDelay(100 / portTICK_PERIOD_MS);
 
     while(1){
+        gpio_set_level(2,1);
         while(espnowCom_send(0, 0, (void *)"ON", 3) != 0){
             ESP_LOGE(TAG, "error sending on");
             vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -30,7 +40,8 @@ void app_main(void)
         }
         i=0;
         vTaskDelay(10 / portTICK_PERIOD_MS);
-
+        
+        gpio_set_level(2,0);
         while(espnowCom_send(0, 0, (void *)"OFF", 4) != 0){
             ESP_LOGE(TAG, "error sending off");
             vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -40,6 +51,6 @@ void app_main(void)
             }
         }
         i=0;
-        vTaskDelay(10 / portTICK_PERIOD_MS);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
 }

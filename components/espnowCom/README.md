@@ -158,6 +158,36 @@ idf.py flash
 
 Make sure both Master and Slave devices are set up and communicating using the ESP-NOW protocol.
 
+### 5. Notes on performance
+
+The max. package Rate i was able to achieve was 1 pkg / 10ms --> 100 pkg /s
+
+Propagation Delay < 2ms
+
+## Quality of live - easy Development
+
+### Symlinks
+Under the useful_scripts is a file called **62-esp32.rules** containing example udev rules to link
+the connected esp32 devices to /dev/ttyESP-Now_Master or /dev/ttyESP-Now_Slave based on the USB-Port they are
+connected to. To make use of this rule simply copy or link it to /etc/udev/rules.d/. and reload the rules with
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+**Note:** you will propably need to adjust ENV{ID_PATH}. You can find out your port with `udevadm info /dev/ttyUSBX`
+
+### Easy flash monitor 
+To make live even easier link esp-nowIDF.sh to the root directory of your project. This small script checks if you are
+developing on Master / Slave and acts like idf.py but setting the correct port.
+
+Examples:
+
+```bash
+./esp-nowIDF.sh flash       # flash software to master/slave based on menuconfig configuration 
+./esp-nowIDF.sh monitor     # monitor master/slave based on menuconfig configuration
+```
+
 ## License
 
 This component is licensed under GPL2.

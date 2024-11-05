@@ -15,6 +15,12 @@
 static QueueHandle_t sendQueue;
 static QueueHandle_t recvQueue;
 
+// mutex for sending
+SemaphoreHandle_t sendSemaphore;
+
+// mutex to signal that handler function should be continued
+SemaphoreHandle_t sendReceiveSemaphore;
+
 static uint8_t broadcast_Mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 // user receiv_cb function array
@@ -113,6 +119,22 @@ int espnowCom_init(){
     ESP_ERROR_CHECK( esp_now_register_send_cb(_espnowCom_send_cb) );
     ESP_ERROR_CHECK( esp_now_register_recv_cb(_espnowCom_recv_cb) );
 
+    // create semaphore for send
+    sendSemaphore = xSemaphoreCreateBinary();
+    if(sendSemaphore == NULL){
+        ESP_LOGE(TAG, "Malloc Semaphore fail");
+        esp_now_deinit();
+        return ESP_FAIL;
+    }
+
+    // create semaphore to signal when data is available to send / receive
+    sendReceiveSemaphore = xSemaphoreCreateBinary();
+    if(sendSemaphore == NULL){
+        ESP_LOGE(TAG, "Malloc Semaphore fail");
+        esp_now_deinit();
+        return ESP_FAIL;
+    }
+
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
     //create payload
     uint8_t *payload = malloc(sizeof(uint8_t) * ESPNOWCOM_PAYLOADLEN);
@@ -123,9 +145,9 @@ int espnowCom_init(){
     esp_fill_random(payload, sizeof(uint8_t)*ESPNOWCOM_PAYLOADLEN);
 
     // create communication handler to hanle send and receive logic
-    xTaskCreate(_espnowCom_com_handler, "espnowCom_com_handler", 2048, payload, 4, NULL);    
+    xTaskCreatePinnedToCore(_espnowCom_com_handler, "espnowCom_com_handler", 2048, payload, 4, NULL, 1);    
 #else
-    xTaskCreate(_espnowCom_com_handler, "espnowCom_com_handler", 2048, NULL, 4, NULL);
+    xTaskCreatePinnedToCore(_espnowCom_com_handler, "espnowCom_com_handler", 2048, NULL, 4, NULL, 1);
 #endif    
     return ESP_OK;
 }
@@ -150,7 +172,7 @@ int espnowCom_init(){
 int espnowCom_send(int slave, int type, void *data, int size){
     espnowCom_sendEvent sendevt;
     espnowCom_DataStruct_Base *datastruct;
-
+    static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 
     if(slave >= esp_SlavesNum){
         if(CONFIG_ESPNOWCOM_DEBUG)
@@ -182,8 +204,10 @@ int espnowCom_send(int slave, int type, void *data, int size){
     if(xQueueSend(sendQueue, &sendevt, 10 / portTICK_PERIOD_MS) != pdTRUE){
         if(CONFIG_ESPNOWCOM_DEBUG)
             ESP_LOGE(TAG, "send queue full!");
+        xSemaphoreGiveFromISR(sendReceiveSemaphore, &xHigherPriorityTaskWoken);
         return -1;
     }
+    xSemaphoreGiveFromISR(sendReceiveSemaphore, &xHigherPriorityTaskWoken);
     return 0;
 }
 #else
@@ -202,7 +226,8 @@ int espnowCom_send(int slave, int type, void *data, int size){
 int espnowCom_send(int type, void *data, int size){
     espnowCom_sendEvent sendevt;
     espnowCom_DataStruct_Base *datastruct;
-    
+    static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
     // allocate memory
     datastruct = malloc(size + 1);
     if(datastruct == NULL){
@@ -222,8 +247,10 @@ int espnowCom_send(int type, void *data, int size){
     if(xQueueSend(sendQueue, &sendevt, 10 / portTICK_PERIOD_MS) != pdTRUE){
         if(CONFIG_ESPNOWCOM_DEBUG)
             ESP_LOGE(TAG, "send queue full!");
+        xSemaphoreGiveFromISR(sendReceiveSemaphore, &xHigherPriorityTaskWoken);
         return -1;
     }
+    xSemaphoreGiveFromISR(sendReceiveSemaphore, &xHigherPriorityTaskWoken);
     return 0;
 }
 #endif
@@ -263,6 +290,7 @@ int espnowCom_addRecv_cb(int type, espnowCom_user_receive_cb cb_function){
  * 
  */
 static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status){
+    static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
     if(mac_addr == NULL){
         ESP_LOGE(TAG, "sending failed: mac_addr is NULL...");
     }
@@ -270,6 +298,7 @@ static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t st
         //propably offline
         ESP_LOGE(TAG, "sending failed: status failed");
     }
+    xSemaphoreGiveFromISR(sendSemaphore, &xHigherPriorityTaskWoken);
 }
 
 /**
@@ -281,9 +310,10 @@ static void _espnowCom_send_cb(const uint8_t *mac_addr, esp_now_send_status_t st
  */
 static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *data, int len)
 {
-    uint8_t * mac_addr;
-    espnowCom_recvEvent evt;
-    
+    static uint8_t * mac_addr;
+    static espnowCom_recvEvent evt;
+    static BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+
     if (recv_info->src_addr == NULL || data == NULL || len <= 0) {
         ESP_LOGE(TAG, "Receive cb arg error");
         return;
@@ -315,6 +345,7 @@ static void _espnowCom_recv_cb(const esp_now_recv_info_t *recv_info, const uint8
     if (xQueueSend(recvQueue, &evt, 1 / portTICK_PERIOD_MS) != pdTRUE) {
         ESP_LOGW(TAG, "sending to receive queue fail...");
     }
+    xSemaphoreGiveFromISR(sendReceiveSemaphore, &xHigherPriorityTaskWoken);
 }
 
 /**
@@ -338,7 +369,7 @@ static void _espnowCom_com_handler(void *payload){
 
     while(1){        
         // receive
-        if(xQueueReceive(recvQueue, &recvevt, 1 / portTICK_PERIOD_MS) == pdTRUE){
+        if(xQueueReceive(recvQueue, &recvevt, ( TickType_t ) 0) == pdTRUE){
 
             recvstruct = (espnowCom_DataStruct_Base *) recvevt.recv_data;
 
@@ -448,14 +479,16 @@ static void _espnowCom_com_handler(void *payload){
             }
         }
         // send userData
-        if(xQueueReceive(sendQueue, &sendevt, 1 / portTICK_PERIOD_MS) == pdTRUE){
+        if(xQueueReceive(sendQueue, &sendevt, ( TickType_t ) 0) == pdTRUE){
             if(CONFIG_ESPNOWCOM_DEBUG){
                 recvstruct = (espnowCom_DataStruct_Base *) sendevt.send_data;
                 ESP_LOGI(TAG, "sending %d, %s, %d", recvstruct->type, (char*) recvstruct->data, sendevt.len);
             }
+            xSemaphoreTake(sendSemaphore, 100 / portTICK_PERIOD_MS);
+
             esp_now_send(sendevt.mac, (uint8_t*) sendevt.send_data, sendevt.len);
             // Todo check if it can be removed and data be freed
-            vTaskDelay(1 / portTICK_PERIOD_MS);
+            //vTaskDelay(1 / portTICK_PERIOD_MS);
             free(sendevt.send_data);
         }
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
@@ -470,6 +503,8 @@ static void _espnowCom_com_handler(void *payload){
                 memcpy(mgmt_sendstruct.payload, payload, ESPNOWCOM_PAYLOADLEN);
                 memcpy(mgmt_sendstruct.name, CONFIG_ESPNOWCOM_MASTERNAME, strlen(CONFIG_ESPNOWCOM_MASTERNAME));
 
+                xSemaphoreTake(sendSemaphore, 100 / portTICK_PERIOD_MS);
+
                 esp_now_send(broadcast_Mac, (uint8_t* ) &mgmt_sendstruct, sizeof(espnowCom_DataStruct_Mgmt));
 
                 Ticks_lasteExec = xTaskGetTickCount();
@@ -483,6 +518,8 @@ static void _espnowCom_com_handler(void *payload){
         }
 #endif
     //vTaskDelay(10 / portTICK_PERIOD_MS);
+    // Wait for new event to arrive but max 100ms
+    xSemaphoreTake(sendReceiveSemaphore, 100 / portTICK_PERIOD_MS);
     }
 }
 #ifdef CONFIG_ESPNOWCOM_MASTERMODE
@@ -554,6 +591,8 @@ void _espnowCom_ACKSlave(uint8_t *mac, void *payload){
     ack.mgmt_type = espnowCom_MGMT_TYPE_ACK;
     memcpy(ack.payload, payload, ESP_NOW_ETH_ALEN);
 
+    xSemaphoreTake(sendSemaphore, 100 / portTICK_PERIOD_MS);
+
     ret = esp_now_send(mac, (uint8_t *) &ack, sizeof(espnowCom_DataStruct_Mgmt));
     if(ret != ESP_OK){
         ESP_LOGE(TAG, "couldn't send ACK!");
@@ -585,10 +624,12 @@ void _espnowCom_pingSlaves(void *payload){
             esp_Slaves[i].connected = true;
         }
         ping.mgmt_count = i;
+        xSemaphoreTake(sendSemaphore, 100 / portTICK_PERIOD_MS);
+
         ret = esp_now_send(esp_Slaves[i].mac, (uint8_t *) &ping, sizeof(espnowCom_DataStruct_Mgmt));
         
         if(ret != ESP_OK){
-            ESP_LOGE(TAG, "couldn't send ping!");
+            ESP_LOGE(TAG, "couldn't send ping!, %x", ret);
         }
         else{
             esp_Slaves[i].pingResp = false;
@@ -672,6 +713,7 @@ void _espnowCom_ACKMaster(uint8_t *mac, void *payload){
     memcpy(ack.payload, payload, ESP_NOW_ETH_ALEN);
     memcpy(ack.name, CONFIG_ESPNOWCOM_SLAVENAME, ESPNOW_NAME_LEN);
     while(ret != ESP_OK){
+        xSemaphoreTake(sendSemaphore, 100 / portTICK_PERIOD_MS);
         ret = esp_now_send(mac, (uint8_t *) &ack, sizeof(espnowCom_DataStruct_Mgmt));
         if(ret != ESP_OK){
             ESP_LOGE(TAG, "couldn't send ACK! (%d)", ret);
