@@ -1,117 +1,194 @@
-# ESPNOW Example
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+# ESPNOW Communication Component
 
-This example shows how to use ESPNOW of wifi. Example does the following steps:
+## Overview
 
-* Start WiFi.
-* Initialize ESPNOW.
-* Register ESPNOW sending or receiving callback function.
-* Add ESPNOW peer information.
-* Send and receive ESPNOW data. 
+This component provides an easy-to-use interface for wireless communication between ESP32 devices using the ESP-NOW protocol. It supports both **Master** and **Slave** modes, allowing you to send and receive data with minimal overhead.
 
-This example need at least two ESP devices:
+In addition, the module offers **connection handling**, a **ping mechanism** to check if the slave is still online, and **automatic reconnection** for devices that disconnect.
 
-* In order to get the MAC address of the other device, Device1 firstly send broadcast ESPNOW data with 'state' set as 0. 
-* When Device2 receiving broadcast ESPNOW data from Device1 with 'state' as 0, adds Device1 into the peer list. 
-  Then start sending broadcast ESPNOW data with 'state' set as 1. 
-* When Device1 receiving broadcast ESPNOW data with 'state' as 1, compares the local magic number with that in the data. 
-  If the local one is bigger than that one, stop sending broadcast ESPNOW data and starts sending unicast ESPNOW data to Device2. 
-* If Device2 receives unicast ESPNOW data, also stop sending broadcast ESPNOW data. 
-  
-In practice, if the MAC address of the other device is known, it's not required to send/receive broadcast ESPNOW data first, 
-just add the device into the peer list and send/receive unicast ESPNOW data.
+### Features:
+- **Master-Slave Communication**: Supports both master and slave roles.
+- **Low overhead and low power**: ESP-NOW minimizes power consumption.
+- **Wi-Fi Mode Configuration**: Station or SoftAP mode options.
+- **Long-range mode**: Optionally enable extended communication range.
+- **Automatic Reconnection**: Auto-reconnect for devices that go offline.
+- **Ping Mechanism**: Check the availability of connected devices.
+- **Callback Support**: User-defined callbacks for handling received data.
 
-There are a lot of "extras" on top of ESPNOW data, such as type, state, sequence number, CRC and magic in this example. These "extras" are 
-not required to use ESPNOW. They are only used to make this example to run correctly. However, it is recommended that users add some "extras" 
-to make ESPNOW data more safe and more reliable.
+## Instructions to include the component in your project
 
-## How to use example
+### 1. Clone the Component into Your Project
 
-### Configure the project
+Navigate to the `components` directory of your project, then clone the ESPNOW component:
+
+```bash
+cd <your esp-idf project folder>
+git clone https://github.com/blackDogLz4/espnow/tree/main
+```
+
+This will copy the component into your project's component folder.
+
+Afterwards you have to add it to your top-level CMakeLists.txt
+e.g:
+```CMAKE
+
+# The following lines of boilerplate have to be in your project's CMakeLists
+# in this exact order for cmake to work correctly
+cmake_minimum_required(VERSION 3.16)
+
+set(EXTRA_COMPONENT_DIRS "components/espnowCom")
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+
+project(esp-master)
 
 ```
+
+### 2. Configure the Component
+
+Open the ESP-IDF configuration menu to configure your ESPNOW communication settings:
+
+```bash
 idf.py menuconfig
 ```
 
-* Set WiFi mode (station or SoftAP) under Example Configuration Options.
-* Set ESPNOW primary master key under Example Configuration Options. 
-  This parameter must be set to the same value for sending and recving devices.
-* Set ESPNOW local master key under Example Configuration Options.
-  This parameter must be set to the same value for sending and recving devices.
-* Set Channel under Example Configuration Options.
-  The sending device and the recving device must be on the same channel.
-* Set Send count and Send delay under Example Configuration Options.
-* Set Send len under Example Configuration Options.
-* Set Enable Long Range Options.
-  When this parameter is enabled, the ESP32 device will send data at the PHY rate of 512Kbps or 256Kbps
-  then the data can be transmitted over long range between two ESP32 devices. 
+Navigate to the **Component Config** and **ESPNOW Communication Component** to configure settings like Wi-Fi mode, long-range mode, and whether the device will function as a Master or Slave.
 
-### Build and Flash
+**Note:** If the watchdog gets triggered either set disable it for CPU1 or increase the blocking time of xQueueReceive() functions in the _espnowCom_com_handler() function
 
-Build the project and flash it to the board, then run monitor tool to view serial output:
+### 3. Using the Component
+
+Once the component is set up and configured, include it in your code by calling the appropriate functions:
+
+#### In Master Mode:
+
+In master mode, you can send data to slaves, ping slaves to check if they are online, and register callbacks for receiving data.
+
+```c
+#include "nvs_flash.h"
+#include "espnowCom.h"
+
+#define TAG "Main-Master"
+
+// function will be called when data with type 0 is received
+void recv_handler(int type, int slave, void *data, int len){
+    char *str;
+    str = (char*) data;
+    ESP_LOGI(TAG, "from %d, %s", slave, str);
+}
+
+void app_main(void)
+{
+    // Initialize NVS
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK( nvs_flash_erase() );
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+
+    // Initialize espnowCom
+    espnowCom_init();
+
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+
+    // register callback to type 0
+    espnowCom_addRecv_cb(1, &recv_handler);
+    
+    while(1){
+        // send "Hello world!" with type 0 to slave 0
+        espnowCom_send(0, 0, (void *)"Hello world!\n", 15);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
 
 ```
-idf.py -p PORT flash monitor
+
+#### In Slave Mode:
+
+In slave mode, the device listens for data from the master and responds accordingly.
+
+```c
+#include "nvs_flash.h"
+#include "espnowCom.h"
+
+#define TAG "Main-Slave"
+
+// function will be called when data with type 0 is received
+void handlerfunc(int type, void *data, int len){
+    char* str;
+    str = (char* )data;
+
+    ESP_LOGI(TAG, "received %s", str);
+}
+
+void app_main(void)
+{
+ 
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK( nvs_flash_erase() );
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( ret );
+    
+    espnowCom_init();
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+
+    // register callback to type 0
+    espnowCom_addRecv_cb(0, &handlerfunc);
+    
+    while(1){
+        // send Hey with type 0 to the Master
+        espnowCom_send(0, "Hey", 4);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
+
 ```
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+### 4. Build and Flash
 
-See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
+After setting up the component and adding it to your project, use the following commands to build and flash your project:
 
-## Example Output
-
-Here is the example of ESPNOW receiving device console output.
-
-```
-I (898) phy: phy_version: 3960, 5211945, Jul 18 2018, 10:40:07, 0, 0
-I (898) wifi: mode : sta (30:ae:a4:80:45:68)
-I (898) espnow_example: WiFi started
-I (898) ESPNOW: espnow [version: 1.0] init
-I (5908) espnow_example: Start sending broadcast data
-I (6908) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (7908) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (52138) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (52138) espnow_example: Receive 0th broadcast data from: 30:ae:a4:0c:34:ec, len: 200
-I (53158) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (53158) espnow_example: Receive 1th broadcast data from: 30:ae:a4:0c:34:ec, len: 200
-I (54168) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (54168) espnow_example: Receive 2th broadcast data from: 30:ae:a4:0c:34:ec, len: 200
-I (54168) espnow_example: Receive 0th unicast data from: 30:ae:a4:0c:34:ec, len: 200
-I (54678) espnow_example: Receive 1th unicast data from: 30:ae:a4:0c:34:ec, len: 200
-I (55668) espnow_example: Receive 2th unicast data from: 30:ae:a4:0c:34:ec, len: 200
+```bash
+idf.py build
+idf.py flash
 ```
 
-Here is the example of ESPNOW sending device console output.
+Make sure both Master and Slave devices are set up and communicating using the ESP-NOW protocol.
 
-```
-I (915) phy: phy_version: 3960, 5211945, Jul 18 2018, 10:40:07, 0, 0
-I (915) wifi: mode : sta (30:ae:a4:0c:34:ec)
-I (915) espnow_example: WiFi started
-I (915) ESPNOW: espnow [version: 1.0] init
-I (5915) espnow_example: Start sending broadcast data
-I (5915) espnow_example: Receive 41th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (5915) espnow_example: Receive 42th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (5925) espnow_example: Receive 44th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (5935) espnow_example: Receive 45th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (6965) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (6965) espnow_example: Receive 46th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (7975) espnow_example: send data to ff:ff:ff:ff:ff:ff
-I (7975) espnow_example: Receive 47th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (7975) espnow_example: Start sending unicast data
-I (7975) espnow_example: send data to 30:ae:a4:80:45:68
-I (9015) espnow_example: send data to 30:ae:a4:80:45:68
-I (9015) espnow_example: Receive 48th broadcast data from: 30:ae:a4:80:45:68, len: 200
-I (10015) espnow_example: send data to 30:ae:a4:80:45:68
-I (16075) espnow_example: send data to 30:ae:a4:80:45:68
-I (17075) espnow_example: send data to 30:ae:a4:80:45:68
-I (24125) espnow_example: send data to 30:ae:a4:80:45:68
+### 5. Notes on performance
+
+The max. package Rate i was able to achieve was 1 pkg / 10ms --> 100 pkg /s
+
+Propagation Delay < 2ms
+
+## Quality of live - easy Development
+
+### Symlinks
+Under the useful_scripts is a file called **62-esp32.rules** containing example udev rules to link
+the connected esp32 devices to /dev/ttyESP-Now_Master or /dev/ttyESP-Now_Slave based on the USB-Port they are
+connected to. To make use of this rule simply copy or link it to /etc/udev/rules.d/. and reload the rules with
+
+```bash
+sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-## Troubleshooting
+**Note:** you will propably need to adjust ENV{ID_PATH}. You can find out your port with `udevadm info /dev/ttyUSBX`
 
-If ESPNOW data can not be received from another device, maybe the two devices are not 
-on the same channel or the primary key and local key are different. 
+### Easy flash monitor 
+To make live even easier link esp-nowIDF.sh to the root directory of your project. This small script checks if you are
+developing on Master / Slave and acts like idf.py but setting the correct port.
 
-In real application, if the receiving device is in station mode only and it connects to an AP, 
-modem sleep should be disabled. Otherwise, it may fail to revceive ESPNOW data from other devices.
+Examples:
+
+```bash
+./esp-nowIDF.sh flash       # flash software to master/slave based on menuconfig configuration 
+./esp-nowIDF.sh monitor     # monitor master/slave based on menuconfig configuration
+```
+
+## License
+
+This component is licensed under GPL2.
+
