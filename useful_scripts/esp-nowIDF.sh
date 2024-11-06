@@ -3,5 +3,12 @@
 
 source sdkconfig
 
-echo idf.py $1 -p $CONFIG_USB_PORT ${@:2}
-idf.py $1 -p $CONFIG_USB_PORT ${@:2}
+if [ "$CONFIG_ESPNOWCOM_MASTERMODE" == "y" ]
+then
+    PORT="/dev/ttyESP-Now_Master"
+else
+    PORT="/dev/ttyESP-Now_Slave"
+fi
+
+echo idf.py $1 -p $PORT ${@:2}
+idf.py $1 -p $PORT ${@:2}

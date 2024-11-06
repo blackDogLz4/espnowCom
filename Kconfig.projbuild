@@ -10,16 +10,6 @@ menu "EspnowCom configuration"
         config ESPNOWCOM_SLAVEMODE
             bool "Slave mode"
     endchoice
-
-    config USB_PORT
-        depends on ESPNOWCOM_MASTERMODE
-        string "Port"
-        default "/dev/ttyESP-Now_Master"
-
-    config USB_PORT
-        depends on ESPNOWCOM_SLAVEMODE
-        string "Port"
-        default "/dev/ttyESP-Now_Slave"
     
     config ESPNOWCOM_MASTERNAME
         depends on ESPNOWCOM_MASTERMODE
